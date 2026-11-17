@@ -11,7 +11,9 @@ import streamlit as st
 from shapely.geometry import LineString
 from streamlit_folium import st_folium
 
+import restorasi as rt
 import scoring as sc
+import ui_restorasi
 
 st.set_page_config(page_title="Krusialitas Jaringan Jalan", layout="wide")
 
@@ -145,7 +147,7 @@ hasil["bahaya"], hasil["status"], hasil["konektivitas"], hasil["densitas"] = H, 
 g = gdf[["geometry"]].join(hasil)
 
 # ---------------- Tampilan ----------------
-tab_peta, tab_tabel, tab_metode = st.tabs(["Peta", "Tabel peringkat", "Metode"])
+tab_peta, tab_tabel, tab_sim, tab_metode = st.tabs(["Peta", "Tabel peringkat", "Simulasi pemulihan", "Metode"])
 
 with tab_peta:
     c = st.columns(4)
@@ -181,6 +183,12 @@ with tab_tabel:
     d1, d2 = st.columns(2)
     d1.download_button("Unduh tabel (CSV)", tabel.to_csv(index=False).encode("utf-8"), "krusialitas_ruas.csv", "text/csv")
     d2.download_button("Unduh peta hasil (GeoJSON)", g.to_json().encode("utf-8"), "krusialitas_ruas.geojson")
+
+with tab_sim:
+    kelas = rt.kelas_jalan(gdf[st_col]) if st_col != "(tidak ada)" else pd.Series("lainnya", index=gdf.index)
+    hz = {"Gabungan (skor bahaya)": hasil["bahaya"].reset_index(drop=True),
+          **{c: sc.to_num(gdf[c]).reset_index(drop=True) for c in haz}}
+    ui_restorasi.tab(gdf, hasil.reset_index(drop=True), kelas, hz, baca_geo)
 
 with tab_metode:
     st.markdown("""
