@@ -1,9 +1,18 @@
 """Perhitungan skor krusialitas ruas jalan (tanpa ketergantungan Streamlit)."""
 import pandas as pd
 
-KELAS = ["Sangat kritis", "Tinggi", "Sedang", "Rendah"]
-WARNA = {"Sangat kritis": "#c62828", "Tinggi": "#ef6c00", "Sedang": "#e0a800", "Rendah": "#2e9d57"}
-LEBAR = {"Sangat kritis": 6, "Tinggi": 4.5, "Sedang": 3, "Rendah": 2}
+# Kelas rawan banjir menurut probabilitas fl_max (batas mutlak, bisa diatur di aplikasi).
+KELAS = ["Rawan tinggi", "Rawan sedang", "Aman"]
+WARNA = {"Rawan tinggi": "#d62828", "Rawan sedang": "#f2b705", "Aman": "#2e9d57"}
+LEBAR = {"Rawan tinggi": 6, "Rawan sedang": 4.5, "Aman": 3}
+BATAS_AWAL = (0.33, 0.66)   # (batas kuning, batas merah)
+
+
+def kelas_banjir(p, batas=BATAS_AWAL):
+    """Probabilitas banjir 0-1 -> 'Aman' (hijau) / 'Rawan sedang' (kuning) / 'Rawan tinggi' (merah)."""
+    kuning, merah = batas
+    return pd.Series(
+        ["Rawan tinggi" if x >= merah else "Rawan sedang" if x >= kuning else "Aman" for x in p], index=p.index)
 KATA_STATUS = {"arteri": ["arteri"], "kolektor": ["kolektor"], "lokal": ["lokal", "lingkungan"]}
 
 
@@ -72,5 +81,4 @@ def hitung(H, S, K, D, w, mode="mul"):
     else:
         skor = (w["h"] * minmax(H) + w["s"] * S + w["k"] * K + w["d"] * D) / ((w["h"] + cs) or 1.0)
     urut = skor.rank(ascending=False, method="first")
-    kelas = pd.cut(urut / len(skor), [0, .1, .3, .6, 1.0], labels=KELAS)
-    return pd.DataFrame({"peringkat": urut.astype(int), "skor": skor, "kelas": kelas.astype(str)})
+    return pd.DataFrame({"peringkat": urut.astype(int), "skor": skor})

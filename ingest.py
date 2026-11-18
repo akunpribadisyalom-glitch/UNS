@@ -180,7 +180,11 @@ def gabung_tabel(gdf, t):
     for c in t.columns:
         k = str(c).lower()
         if k in kg and t[c].is_unique and gdf[kg[k]].isin(t[c]).mean() >= .5:
-            return gdf.merge(t, left_on=kg[k], right_on=c, how="left", suffixes=("", "_tabel"))
+            # kolom bernama sama di tabel (selain kunci) menggantikan kolom lama di jalan,
+            # supaya unggahan baru (mis. fl_max hasil simulasi hujan) langsung dipakai.
+            ganti = [x for x in t.columns if x != c and x in gdf.columns and x != "geometry"]
+            gm = gdf.drop(columns=ganti).merge(t, left_on=kg[k], right_on=c, how="left", suffixes=("", "_tabel"))
+            return gpd.GeoDataFrame(gm, geometry="geometry", crs=gdf.crs)
     return gdf
 
 
@@ -189,10 +193,21 @@ def tebak_kolom(n):
     if re.search(r"status|fungsi|kelas|hierarki", n): return "status"
     if re.search(r"dens|kepadatan|permukiman|pemukiman|penduduk", n): return "dens"
     if re.search(r"(^|_)rs(_|$)|sakit|faskes|fasilitas|antar|konek|akses|jarak|dist", n): return "konek"
-    if re.search(r"banjir|longsor|gempa|likuef|tsunami|erupsi|kering|angin|prob|^p_|_p$|hazard|bahaya|rawan|_max$", n):
-        return "haz"
-    if re.search(r"^(id|nama|name|ruas)", n): return "id"
+    if re.search(r"banjir|flood|(^|_)fl(_|$)", n): return "haz"
+    if re.search(r"nama_?jalan|nm_?jalan|jalan_?nama|street|^name$|^nama$|^nm_?ruas$|nama_?ruas", n): return "jalan"
+    if re.search(r"^(id|no|nomor|ruas)", n): return "id"
     return ""
+
+
+def kolom_banjir(kolom):
+    """Pilih kolom probabilitas banjir: 'fl_max' dulu, lalu nama yang mengandung flood/banjir."""
+    for c in kolom:
+        if str(c).lower().strip() == "fl_max":
+            return c
+    for c in kolom:
+        if re.search(r"fl_?max|flood|banjir", str(c).lower()):
+            return c
+    return None
 
 
 def contoh():
@@ -207,13 +222,9 @@ def contoh():
             a = j * nx_ + i
             for b in ([a + 1] if i < nx_ - 1 else []) + ([a + nx_] if j < ny_ - 1 else []):
                 d = ((pts[a][1] + pts[b][1]) / 2 + 7.80) / .05
-                rows.append({"id_ruas": f"R-{len(rows) + 1:03d}",
+                rows.append({"no_ruas": len(rows) + 1,
                              "fungsi": str(rng.choice(["Arteri", "Kolektor", "Lokal", "Lokal", "Lingkungan"])),
-                             "p_banjir": round(float(np.clip(.75 - d * .6 + rng.random() * .3, 0, 1)), 2),
-                             "p_longsor": round(float(rng.random() * .4), 2),
-                             "p_gempa": round(float(.1 + rng.random() * .2), 2),
-                             "n_konek": int(rng.integers(1, 6)),
-                             "dens_km": round(float(20 + rng.random() * 180), 1),
+                             "fl_max": round(float(np.clip(.95 - d * .9 + rng.random() * .3, 0, 1)), 2),
                              "geometry": LineString([pts[a], pts[b]])})
     g = gpd.GeoDataFrame(rows, crs=4326)
     peran = ["rs", "rs", "posko", "depot", "quarry"] + ["permukiman"] * 8

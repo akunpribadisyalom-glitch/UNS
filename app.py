@@ -3,11 +3,14 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from shapely.geometry import shape
 from streamlit_folium import st_folium
 
+import animasi as an
 import gaya
 import ingest
+import nama_jalan as nj
 import pemulihan as pm
 import peta
 import restorasi as rt
@@ -17,13 +20,7 @@ st.set_page_config(page_title="Jalan Siaga", page_icon="🛣️", layout="wide",
 gaya.terapkan()
 S = st.session_state
 
-BENCANA = {"banjir": "🌊 Banjir", "longsor": "⛰️ Longsor", "gempa": "🏚️ Gempa", "umum": "🧭 Umum"}
-CATATAN = {
-    "banjir": "Banjir: akses warga ke **rumah sakit** dan posko didahulukan.",
-    "longsor": "Longsor: ruas tertimbun, jadi **alat berat/quarry harus bisa menjangkau ruas** lebih dulu.",
-    "gempa": "Gempa: gabungan akses RS, alat berat, dan keterhubungan jaringan.",
-    "umum": "Umum: waktu tempuh perjalanan dan keterhubungan jaringan paling berpengaruh.",
-}
+bencana = "banjir"        # aplikasi ini khusus banjir; bahaya hanya dari probabilitas banjir (fl_max)
 MODE = {"putus": "🔴 Putus", "lambat": "🟠 Terganggu", "normal": "✅ Normal", "rs": "🏥 RS", "posko": "⛺ Posko",
         "depot": "🚜 Alat berat", "quarry": "⛏️ Quarry", "permukiman": "🏠 Permukiman"}
 STATUS_MODE = ("putus", "lambat", "normal")
@@ -32,7 +29,7 @@ JENIS_LBL = {"rs": "🏥 RS", "posko": "⛺ posko", "depot": "🚜 alat berat", 
              "permukiman": "🏠 permukiman"}
 
 st.markdown("<div class='hero'><h1>🛣️ Jalan Siaga</h1>"
-            "<p>Unggah peta jalan, pilih bencana, tandai jalan yang putus. Urutan perbaikan terbaik muncul otomatis.</p></div>",
+            "<p>Unggah peta jalan berisi probabilitas banjir (fl_max), tandai jalan yang putus. Urutan dan animasi perbaikan muncul otomatis.</p></div>",
             unsafe_allow_html=True)
 
 
@@ -145,33 +142,32 @@ c_titik = st.expander("📍 Daftar titik (RS, posko, alat berat, quarry, permuki
 c_lain = st.expander("📊 Peringkat krusialitas, dasar ilmiah, dan unduhan")
 c_adv = st.expander("⚙️ Pengaturan lanjutan (nilai awal sudah siap pakai)")
 
-# =============================================================== 2. BENCANA
-with c_bencana:
-    st.markdown("### 2️⃣ Pilih bencana")
-    bencana = st.segmented_control("Bencana", list(BENCANA), format_func=BENCANA.get, default="banjir",
-                                   key="rt_bencana", label_visibility="collapsed") or "banjir"
-    st.markdown(CATATAN[bencana])
-
 # =============================================================== pengaturan lanjutan
 kol = [c for c in gdf.columns if c != "geometry"]
 pil = lambda rol: [c for c in kol if ingest.tebak_kolom(c) == rol]
+fl_awal = ingest.kolom_banjir(kol)
 with c_adv:
     a1, a2, a3 = st.columns(3)
-    idc = a1.selectbox("Nama ruas", ["(nomor urut)"] + kol, key="rt_idc",
+    fl = a1.selectbox("Kolom probabilitas banjir", ["(tidak ada)"] + kol, key="rt_fl",
+                      index=(kol.index(fl_awal) + 1) if fl_awal is not None else 0,
+                      help="Satu-satunya kolom bahaya yang dipakai. Bawaan: fl_max.")
+    idc = a2.selectbox("Kolom nomor ruas", ["(nomor urut)"] + kol, key="rt_idc",
                        index=(kol.index(pil("id")[0]) + 1) if pil("id") else 0)
-    st_col = a2.selectbox("Status jalan (arteri/kolektor/lokal)", ["(tidak ada)"] + kol, key="rt_stcol",
-                          index=(kol.index(pil("status")[0]) + 1) if pil("status") else 0)
-    haz = a3.multiselect("Kolom bahaya", kol, default=pil("haz"), key="rt_haz")
-    b1, b2 = st.columns(2)
-    konek = b1.multiselect("Kolom konektivitas", kol, default=pil("konek"), key="rt_konek")
-    dens = b2.multiselect("Kolom densitas permukiman", kol, default=pil("dens"), key="rt_dens")
-    s1, s2, s3, s4 = st.columns(4)
-    how = s1.selectbox("Gabungan bahaya", ["union", "max", "mean"], key="rt_how", format_func={
-        "union": "Peluang salah satu terjadi", "max": "Maksimum", "mean": "Rata-rata"}.get)
-    mode_skor = s2.selectbox("Rumus skor", ["mul", "add"], key="rt_mskor", format_func={
+    kj = a3.selectbox("Kolom nama jalan di file (jika sudah ada)", ["(tidak ada)"] + kol, key="rt_kj",
+                      index=(kol.index(pil("jalan")[0]) + 1) if pil("jalan") else 0)
+    cari_on = st.checkbox("Cari nama jalan otomatis dari OpenStreetMap (butuh internet)", True, key="rt_cari")
+    r1, r2 = st.columns(2)
+    b_kuning = r1.number_input("Batas kuning (probabilitas banjir ≥)", 0.01, 0.99, sc.BATAS_AWAL[0], 0.01, key="rt_bk")
+    b_merah = r2.number_input("Batas merah (probabilitas banjir ≥)", 0.01, 1.0, sc.BATAS_AWAL[1], 0.01, key="rt_bm")
+    st.markdown("**Faktor tambahan (opsional).** Bawaan kosong, jadi skor hanya dari probabilitas banjir.")
+    f1_, f2_, f3_ = st.columns(3)
+    st_col = f1_.selectbox("Status jalan (arteri/kolektor/lokal)", ["(tidak ada)"] + kol, key="rt_stcol")
+    konek = f2_.multiselect("Kolom konektivitas", kol, key="rt_konek")
+    dens = f3_.multiselect("Kolom densitas permukiman", kol, key="rt_dens")
+    s3, s4 = st.columns(2)
+    inv = s3.checkbox("Konektivitas berupa jarak", False, key="rt_inv")
+    mode_skor = s4.selectbox("Rumus skor bila ada faktor tambahan", ["mul", "add"], key="rt_mskor", format_func={
         "mul": "Bahaya × Konsekuensi", "add": "Jumlah terbobot"}.get)
-    norm = s3.checkbox("Normalisasi min–max bahaya", False, key="rt_norm")
-    inv = s4.checkbox("Konektivitas berupa jarak", False, key="rt_inv")
     w1, w2, w3, w4 = st.columns(4)
     wh = w1.number_input("Bobot bahaya", 0, 10, 5, key="rt_wh")
     ws = w2.number_input("Bobot status jalan", 0, 10, 3, key="rt_ws")
@@ -180,30 +176,71 @@ with c_adv:
     nilai = {"arteri": 1.0, "kolektor": 0.7, "lokal": 0.4, "lainnya": 0.2}
     p1, p2, p3, p4 = st.columns(4)
     kru = p1.number_input("Tim kerja", 1, 20, 1, key="rt_kru")
-    tetap = p2.number_input("Durasi tetap/ruas (jam)", 0.1, 200.0, rt.PERBAIKAN[bencana][0], 0.5,
-                            key=f"rt_dt_{bencana}")
-    perkm = p3.number_input("Tambahan per km (jam)", 0.0, 200.0, rt.PERBAIKAN[bencana][1], 1.0,
-                            key=f"rt_dk_{bencana}")
+    tetap = p2.number_input("Durasi tetap/ruas (jam)", 0.1, 200.0, rt.PERBAIKAN[bencana][0], 0.5, key="rt_dt_banjir")
+    perkm = p3.number_input("Tambahan per km (jam)", 0.0, 200.0, rt.PERBAIKAN[bencana][1], 1.0, key="rt_dk_banjir")
     p4.number_input("EPSG bila CRS file tak terbaca", 1000, 99999, 32749, key="rt_epsg")
     q1, q2 = st.columns(2)
     sa_on = q1.checkbox("Cari urutan lebih baik (simulated annealing, lebih lama)", False, key="rt_sa")
     opt_on = q2.checkbox("Hitung solusi optimal (hanya bila ≤14 ruas putus)", False, key="rt_opt")
-    st.caption("Bobot prioritas per bencana, kecepatan jalan, dan durasi adalah asumsi awal yang menerjemahkan literatur; "
-               "sesuaikan dengan data BPBD/PU setempat. Quarry dihitung sebagai sumber alat/material bersama alat berat.")
+    st.caption("Kecepatan jalan dan durasi perbaikan adalah asumsi awal; sesuaikan dengan data BPBD/PU setempat. "
+               "Quarry dihitung sebagai sumber alat/material bersama alat berat.")
 
-# =============================================================== skor krusialitas
+# =============================================================== 2. BANJIR + NAMA JALAN
+with c_bencana:
+    st.markdown("### 2️⃣ Banjir")
+    st.markdown("Bahaya dibaca dari **probabilitas banjir (`fl_max`)** saja. Akses warga ke **rumah sakit** dan posko didahulukan.")
+    if fl == "(tidak ada)":
+        st.error("Kolom probabilitas banjir (fl_max) tidak ditemukan di file jalan, jadi semua ruas tampil hijau. "
+                 "Pilih kolomnya di ⚙️ Pengaturan lanjutan. Kolom yang ada: " + ", ".join(map(str, kol)))
+    ulang = st.button("🔄 Cari ulang nama jalan", key="rt_cari_ulang", disabled=not cari_on or demo)
+    if cari_on and not demo and (ulang or (S.get("rt_nj") is None and S.get("rt_njgalat") is None)):
+        bar = st.progress(0.0, text="Mengunduh nama jalan dari OpenStreetMap...")
+        try:
+            hasil_nj, cat_nj = nj.cari_nama(
+                gdf, S["rt_utm"],
+                progres=lambda i, n: bar.progress(min(i / max(n, 1), 1.0), text=f"Mengunduh peta OSM ({i + 1}/{n})..."))
+            S["rt_nj"], S["rt_njcat"], S["rt_njgalat"] = hasil_nj, cat_nj, None
+        except Exception as e:  # tanpa internet pun aplikasi tetap jalan, hanya tanpa nama jalan
+            S["rt_nj"], S["rt_njcat"], S["rt_njgalat"] = None, None, str(e)
+        bar.empty()
+    if S.get("rt_njgalat"):
+        st.warning(f"Nama jalan belum bisa dicari: {S['rt_njgalat']} Tabel tetap memakai nomor ruas.")
+    elif S.get("rt_njcat"):
+        st.caption(S["rt_njcat"] + " Pencocokan memakai jalan OSM terdekat (≤25 m), jadi sesekali bisa keliru di persimpangan.")
+
+# =============================================================== skor (hanya probabilitas banjir, fl_max)
 nol = pd.Series(0.0, index=gdf.index)
-H = sc.hazard(gdf, haz, how, None, norm, True) if haz else nol
+Hraw = sc.hazard(gdf, [fl], "max", None, False, True) if fl != "(tidak ada)" else nol
 Sx = sc.status(gdf[st_col], nilai) if st_col != "(tidak ada)" else nol
 K = sc.rata_minmax(gdf, konek, inv) if konek else nol
 D = sc.rata_minmax(gdf, dens) if dens else nol
-w = {"h": wh if haz else 0, "s": ws if st_col != "(tidak ada)" else 0, "k": wk if konek else 0, "d": wd if dens else 0}
-hasil = sc.hitung(H, Sx, K, D, w, mode_skor if haz else "add")
-nama = (gdf[idc].astype(str) if idc != "(nomor urut)" else pd.Series((gdf.index + 1).map(lambda x: f"Ruas {x}"))
-        ).reset_index(drop=True)
-hasil.insert(0, "ruas", nama)
+w = {"h": wh if fl != "(tidak ada)" else 0, "s": ws if st_col != "(tidak ada)" else 0, "k": wk if konek else 0,
+     "d": wd if dens else 0}
+hasil = sc.hitung(Hraw, Sx, K, D, w, mode_skor if fl != "(tidak ada)" else "add")
+kelas_s = sc.kelas_banjir(Hraw, (b_kuning, b_merah))
+
+# --- nomor ruas dan nama jalan
+no_ruas = (gdf[idc].astype(str) if idc != "(nomor urut)" else pd.Series((gdf.index + 1).astype(str), index=gdf.index))
+no_ruas = no_ruas.map(lambda x: f"Ruas {x}" if x.strip().isdigit() else x).reset_index(drop=True)
+jalan = pd.Series("", index=gdf.index, dtype=object)
+if kj != "(tidak ada)":
+    jalan = gdf[kj].fillna("").astype(str).str.strip().replace({"nan": "", "None": ""})
+yakin = pd.Series(np.nan, index=gdf.index)
+if S.get("rt_nj") is not None:
+    osm_n = S["rt_nj"]["nama_jalan"].reindex(gdf.index).fillna("")
+    kosong = jalan == ""
+    jalan = jalan.where(~kosong, osm_n)
+    yakin = S["rt_nj"]["yakin_pct"].reindex(gdf.index).where(kosong)
+jalan = jalan.reset_index(drop=True)
+nama = no_ruas.where(jalan == "", no_ruas + " · " + jalan)
+
+hasil.insert(0, "ruas", no_ruas)
+hasil.insert(1, "nama_jalan", jalan)
+hasil["prob_banjir"] = Hraw.values
+hasil["kelas"] = kelas_s.values
+hasil["yakin_nama_pct"] = yakin.values
 g = gdf[["geometry"]].copy()
-g["nama"], g["kelas"], g["skor"] = nama.values, hasil["kelas"].values, hasil["skor"].values
+g["nama"], g["kelas"], g["skor"] = nama.values, kelas_s.values, Hraw.values
 kelas_graf = rt.kelas_jalan(gdf[st_col]) if st_col != "(tidak ada)" else pd.Series("lainnya", index=gdf.index)
 G = pm.graf(gdf, tuple(kelas_graf), tuple(sorted(rt.KECEPATAN.items())), S["rt_sig"], 5)
 
@@ -255,8 +292,9 @@ with c_main:
         mode = st.segmented_control("Klik peta untuk", list(MODE), format_func=MODE.get, default="putus",
                                     key="rt_mode", label_visibility="collapsed") or "putus"
         t1, t2, t3 = st.columns([4, 1.3, 1.7])
-        tampil = t1.segmented_control("Tampilan", ["urutan", "tempuh"], default="urutan", key="rt_tampil",
-                                      format_func={"urutan": "🔢 Urutan perbaikan", "tempuh": "🚗 Waktu tempuh"}.get,
+        tampil = t1.segmented_control("Tampilan", ["urutan", "animasi", "tempuh"], default="urutan", key="rt_tampil",
+                                      format_func={"urutan": "🔢 Urutan perbaikan", "animasi": "🎬 Animasi perbaikan",
+                                                   "tempuh": "🚗 Waktu tempuh"}.get,
                                       label_visibility="collapsed") or "urutan"
         if t2.button("🎯 Pusatkan", key="rt_pusat", help="Kembali ke seluruh data"):
             S["rt_view"] = None
@@ -284,23 +322,54 @@ with c_main:
                 tbl, jalur = rt.bandingkan_od(M, rep)
                 tbl["observasi_menit"] = res["obs"]
 
+        if tampil == "animasi" and not res:
+            st.info("Animasi butuh minimal 1 ruas putus. Pilih **🔴 Putus** lalu klik ruas di peta, atau gambar area banjir.")
+            tampil = "urutan"
+
         m = peta.dasar(g, S["rt_view"])
         peta.jalan_krusial(m, g)
         peta.gangguan(m, gdf, nama, P, L, rep)
-        if tampil == "tempuh":
-            peta.tempuh(m, gdf, res["M"], tbl, jalur, pilih_od)
-        elif res:
-            peta.lencana(m, gdf, {int(r.ruas): int(r.urutan) for r in jd.itertuples()})
-        if len(tv):
-            peta.pin(m, tv)
-        peta.alat_gambar(m)
-        folium.LayerControl(collapsed=True).add_to(m)
-        out = st_folium(m, height=600, use_container_width=True, key=f"rt_map_{S['rt_sig']}_{S['rt_mapver']}",
-                        returned_objects=["last_clicked", "all_drawings", "center", "zoom"])
-        st.markdown(
-            "<span class='chip'>🟣 jalan krusial</span><span class='chip'>🔴 putus</span>"
-            "<span class='chip'>🟠 terganggu</span><span class='chip'>🟢 sudah diperbaiki</span>"
-            "<span class='chip'>🟡 nomor = urutan perbaikan</span>", unsafe_allow_html=True)
+        out = None
+        if tampil == "animasi":
+            tp_ = ti["tp"]
+            src = tp_[tp_["jenis"] == "quarry"]
+            if src.empty:
+                src = tp_[tp_["jenis"] == "depot"]
+            kunci_an = pm.md5(res["sig"], best, kru, [(r.nama, r.node) for r in src.itertuples()])
+            if S.get("rt_an_kunci") != kunci_an:
+                S["rt_an"] = an.siapkan(res["M"], jd, nama, gdf.geometry.reset_index(drop=True), res["tit"][best], src)
+                S["rt_an_kunci"] = kunci_an
+            if len(tv):
+                peta.pin(m, tv)
+            an.Animasi(S["rt_an"]).add_to(m)
+            folium.LayerControl(collapsed=True).add_to(m)
+            components.html(m.get_root().render(), height=640)
+            if src.empty:
+                st.info("Belum ada **quarry** (atau alat berat). Animasi hanya menampilkan pengerjaan tiap ruas. "
+                        "Tambahkan quarry lewat mode ⛏️ di tampilan Urutan perbaikan, lalu kembali ke sini.")
+            else:
+                st.caption("Truk berangkat dari quarry ke tiap ruas putus lewat jalan yang sudah terbuka, "
+                           "lalu tim memperbaiki sampai ruas berubah hijau. Waktu animasi dipercepat; "
+                           "fase truk berangkat dibuat lebih lambat agar terlihat.")
+        else:
+            if tampil == "tempuh":
+                peta.tempuh(m, gdf, res["M"], tbl, jalur, pilih_od)
+            elif res:
+                peta.lencana(m, gdf, {int(r.ruas): int(r.urutan) for r in jd.itertuples()})
+            if len(tv):
+                peta.pin(m, tv)
+            peta.alat_gambar(m)
+            folium.LayerControl(collapsed=True).add_to(m)
+            out = st_folium(m, height=600, use_container_width=True, key=f"rt_map_{S['rt_sig']}_{S['rt_mapver']}",
+                            returned_objects=["last_clicked", "all_drawings", "center", "zoom"])
+        st.markdown(gaya.legenda([
+            (sc.WARNA["Rawan tinggi"], f"Banjir rawan tinggi (≥{b_merah:.0%})", False),
+            (sc.WARNA["Rawan sedang"], f"Rawan sedang (≥{b_kuning:.0%})", False),
+            (sc.WARNA["Aman"], "Aman", False),
+            (gaya.KORAL, "Putus", True), (gaya.AMBER, "Terganggu", True), (gaya.HIJAU, "Sudah diperbaiki", False)]),
+            unsafe_allow_html=True)
+        if tampil == "urutan":
+            st.caption("Lingkaran putih bernomor di peta = urutan perbaikan.")
 
         besar = max(len(c) for c in nx.connected_components(G)) / G.number_of_nodes()
         if besar < .9:
@@ -352,7 +421,7 @@ with c_main:
                            "agar urutan memperhitungkan akses darurat.")
         elif res:
             rg = res["rg"]
-            if tampil == "urutan":
+            if tampil in ("urutan", "animasi"):
                 b = rg[best]
                 st.markdown(
                     "<div class='ringkas'>"
@@ -365,7 +434,7 @@ with c_main:
                         st.markdown(gaya.chip(f"✨ Kerugian {pct:.0f}% lebih kecil dari urut krusialitas biasa", "ok"),
                                     unsafe_allow_html=True)
                 st.caption(f"Urutan dari {pm.NAMA_ALGO[best]} · {len(P)} ruas putus, {len(L)} terganggu · "
-                           f"{int(kru)} tim kerja · bencana {BENCANA[bencana]}")
+                           f"{int(kru)} tim kerja · banjir")
                 with st.container(height=330):
                     for r in jd.sort_values("urutan").itertuples():
                         extra = " · ⚠️ alat berat belum bisa sampai" if r.akses_darurat else ""
@@ -380,6 +449,8 @@ with c_main:
                               y_label="Pemulihan (%)")
                 jj = jd.sort_values("urutan").copy()
                 jj.insert(2, "nama_ruas", [nama[int(i)] for i in jj["ruas"]])
+                jj.insert(3, "nomor_ruas", [no_ruas[int(i)] for i in jj["ruas"]])
+                jj.insert(4, "nama_jalan", [jalan[int(i)] for i in jj["ruas"]])
                 gj = gdf.loc[jj["ruas"].astype(int), ["geometry"]].copy()
                 gj["urutan"], gj["nama"] = jj["urutan"].values, jj["nama_ruas"].values
                 gj["mulai_jam"], gj["selesai_jam"] = jj["mulai_jam"].values, jj["selesai_jam"].values
@@ -408,26 +479,32 @@ with c_main:
                                f"{(ob['observasi_menit'] / ob['normal_menit']).median():.2f}. "
                                "Jauh dari 1 berarti kecepatan asumsi perlu dikalibrasi.")
                 st.caption("Garis lurus asal→tujuan: hijau ≤1,1× normal, kuning ≤1,5×, oranye ≤2,5×, merah lebih, "
-                           "hitam terputus. Rute: biru normal, ungu terdampak, hijau sekarang.")
+                           "ungu tua terputus. Rute: biru normal, ungu terdampak, hijau sekarang.")
 
 # =============================================================== lain-lain
 with c_lain:
     tabel = hasil.sort_values("peringkat")
     topn = st.number_input("Tampilkan N ruas teratas", 1, len(tabel), min(25, len(tabel)), key="rt_topn")
-    st.dataframe(tabel.head(int(topn)), hide_index=True, width="stretch", column_config={
-        "skor": st.column_config.ProgressColumn("skor", min_value=0.0, max_value=float(max(tabel.skor.max(), 1e-9)),
-                                                format="%.3f")})
+    kolom_tabel = ["peringkat", "ruas", "nama_jalan", "prob_banjir", "kelas", "skor", "yakin_nama_pct"]
+    st.dataframe(tabel[kolom_tabel].head(int(topn)), hide_index=True, width="stretch", column_config={
+        "prob_banjir": st.column_config.ProgressColumn("prob. banjir (fl_max)", min_value=0.0, max_value=1.0,
+                                                       format="%.2f"),
+        "skor": st.column_config.NumberColumn("skor", format="%.3f"),
+        "yakin_nama_pct": st.column_config.NumberColumn("keyakinan nama (%)", format="%.0f",
+                                                        help="Seberapa konsisten nama jalan OSM sepanjang ruas ini")})
     g1, g2 = st.columns(2)
-    g1.download_button("⬇️ Tabel krusialitas (CSV)", tabel.to_csv(index=False).encode("utf-8"), "krusialitas_ruas.csv",
+    g1.download_button("⬇️ Tabel ruas (CSV)", tabel.to_csv(index=False).encode("utf-8"), "krusialitas_ruas.csv",
                        "text/csv")
-    g2.download_button("⬇️ Peta krusialitas (GeoJSON)", g.to_json().encode("utf-8"), "krusialitas_ruas.geojson")
+    g2.download_button("⬇️ Peta ruas (GeoJSON)", g.to_json().encode("utf-8"), "krusialitas_ruas.geojson")
     st.markdown("""
-**Skor krusialitas:** Risiko = Bahaya × Konsekuensi (status jalan, konektivitas, densitas permukiman), semuanya 0–1.
-Kelas: 10% teratas Sangat kritis, 20% berikutnya Tinggi, 30% Sedang, sisanya Rendah.
+**Warna jalan:** dari probabilitas banjir `fl_max` saja. Hijau = aman, kuning = rawan sedang, merah = rawan tinggi.
+Batas kuning dan merah bisa diubah di Pengaturan lanjutan.
+
+**Nama jalan:** inputan hanya nomor ruas; nama jalan dicari dari OpenStreetMap lewat kecocokan posisi (jalan OSM terdekat,
+maksimal 25 m, suara terbanyak di sepanjang ruas). Kolom *keyakinan nama* menunjukkan seberapa konsisten hasilnya.
 
 **Urutan perbaikan:** tiap langkah memilih ruas yang paling menurunkan kerugian per jam kerja (greedy). Kerugian
-menggabungkan akses ke RS/posko, akses alat berat, waktu tempuh perjalanan, keterhubungan jaringan, dan krusialitas, dengan
-bobot yang berbeda untuk tiap bencana.
+menggabungkan akses ke RS/posko, akses alat berat, waktu tempuh perjalanan, keterhubungan jaringan, dan probabilitas banjir.
 
 **Rujukan:** Gorani & Dong, *Optimization of Equitable Routes to Critical Facilities After Flood Events*;
 Moghtadernejad, Adey & Hackl (2022), *Determination of Postdisaster Restoration Programs for Road Networks Using a
@@ -436,6 +513,7 @@ Double-Stage Optimization Approach*, J. Infrastruct. Syst. (doi:10.1061/(ASCE)IS
 reconstruction activities after a disaster considering interdependencies and priorities*;
 *Restoration of services in disrupted infrastructure systems: A network science approach* (PMC5812613).
 
-**Batasan:** bobot per bencana, kecepatan, dan durasi adalah asumsi, bukan angka dari jurnal; untuk longsor (akses alat
-berat) dukungannya baru praktik lapangan. Waktu tempuh tanpa kemacetan dan kapasitas jalan.
+**Batasan:** kecepatan jalan dan durasi perbaikan adalah asumsi, bukan angka dari jurnal. Waktu tempuh tanpa kemacetan
+dan kapasitas jalan. Animasi memakai jadwal yang sama dengan urutan perbaikan; jalur truk dari quarry mengikuti jalan
+yang sudah terbuka pada saat tim berangkat.
 """)
