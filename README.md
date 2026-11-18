@@ -1,26 +1,23 @@
-# Krusialitas Jaringan Jalan
+# 🛣️ Jalan Siaga
 
-Aplikasi Streamlit untuk memeringkat ruas jalan berdasarkan bahaya bencana, status jalan, konektivitas, dan densitas permukiman, lalu menampilkannya di peta berwarna.
+Aplikasi Streamlit untuk krusialitas jaringan jalan dan urutan perbaikan pascabencana.
 
-## Menjalankan
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
+## Cara pakai (3 langkah)
+1. **Unggah** semua file sekaligus. Perannya dibaca otomatis:
+   - garis terbanyak = jalan (GeoJSON, GeoPackage, Shapefile .zip)
+   - titik atau CSV `nama,jenis,lat,lon,bobot` = RS, posko, alat berat, quarry, permukiman
+     (jenis dibaca dari kolom `jenis/type/amenity/...` atau dari nama file)
+   - poligon (atau nama file berisi banjir/longsor/genangan) = area gangguan
+   - CSV `nama,asal_lat,asal_lon,tujuan_lat,tujuan_lon,waktu_menit,bobot` = data perjalanan
+2. **Pilih bencana**: banjir, longsor, gempa, atau umum.
+3. **Tandai jalan putus** langsung di peta (klik ruas, atau gambar area), urutan perbaikan terbaik muncul otomatis.
 
-## Deploy (Streamlit Community Cloud)
-1. Push folder ini ke GitHub.
-2. Di share.streamlit.io pilih repo, branch `main`, main file `app.py`.
+Peta membuka lokasi data yang diunggah (tidak terkunci di satu daerah). Titik RS/posko/alat berat/quarry/permukiman
+juga bisa ditambah manual: pilih mode di atas peta, lalu klik lokasinya.
 
-## Data masukan
-Dari QGIS: **Export → Save Features As** → GeoJSON, GeoPackage, atau Shapefile (di-zip). CRS apa pun boleh, aplikasi mengubahnya ke EPSG:4326 sendiri. Tiap baris = satu ruas jalan (garis) dengan kolom bahaya, status, konektivitas, dan densitas. Atribut juga bisa dari Excel/CSV terpisah, digabung lewat kolom kunci (mis. `id_ruas`).
+## Berkas
+`app.py` halaman utama, `ingest.py` pembaca/penebak file, `pemulihan.py` penghubung model, `peta.py` peta,
+`gaya.py` tampilan, `restorasi.py` model dan algoritma (greedy, simulated annealing, optimal DP), `scoring.py` skor krusialitas,
+`.streamlit/config.toml` tema.
 
-## Simulasi pemulihan (tab "Simulasi pemulihan")
-1. Pilih jenis bencana (banjir, longsor, gempa, umum): bobot prioritas berubah (banjir: akses RS; longsor: akses alat berat).
-2. Tandai ruas putus/terganggu: klik ruas, gambar area di peta, unggah GeoJSON gangguan, atau skenario acak berbobot bahaya.
-3. Isi titik RS/posko/depot/permukiman (unggah GeoJSON/CSV atau isi tabel) dan data perjalanan (otomatis atau unggah).
-4. Jalankan algoritma (greedy, simulated annealing, optimal DP, urut krusialitas, acak) dan bandingkan kurva pemulihan.
-5. Lihat waktu tempuh normal, terdampak, dan setelah perbaikan pada peta.
-
-Format tabel perjalanan: `nama, asal_lat, asal_lon, tujuan_lat, tujuan_lon, waktu_menit, bobot`.
-Format tabel titik: `nama, jenis, lat, lon, bobot` (jenis: rs, posko, depot, permukiman).
+Jalankan: `pip install -r requirements.txt` lalu `streamlit run app.py`.

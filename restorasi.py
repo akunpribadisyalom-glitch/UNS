@@ -24,7 +24,7 @@ import pandas as pd
 
 import scoring as sc
 
-JENIS_TITIK = ["rs", "posko", "depot", "permukiman"]
+JENIS_TITIK = ["rs", "posko", "depot", "quarry", "permukiman"]   # quarry dianggap sumber alat/material (digabung dengan depot)
 
 KECEPATAN = {"arteri": 40.0, "kolektor": 30.0, "lokal": 20.0, "lainnya": 15.0}   # km/jam, asumsi
 # (jam tetap per ruas, jam tambahan per km): ASUMSI awal, ganti dengan data BPBD/PU setempat.
