@@ -46,6 +46,7 @@ h1,h2,h3,h4,h5{font-family:'Baloo 2','Trebuchet MS',sans-serif!important;color:v
  background:#fff!important;color:var(--navy)!important}
 [data-testid="stSegmentedControl"] button p{color:inherit!important}
 [data-testid="stSegmentedControl"] button[aria-checked="true"],
+[data-testid="stSegmentedControl"] button[aria-pressed="true"],
 [data-testid="stSegmentedControl"] button[kind="segmented_controlActive"]{background:var(--navy)!important;color:#fff!important}
 [data-testid="stSegmentedControl"] button:hover{background:var(--sun)!important;color:var(--navy)!important}
 iframe{border:3px solid var(--navy)!important;border-radius:20px;box-shadow:6px 6px 0 var(--navy)}
@@ -67,13 +68,55 @@ iframe{border:3px solid var(--navy)!important;border-radius:20px;box-shadow:6px 
 .ringkas span{font-size:.78rem;font-weight:700;color:#3b4468}
 [data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] *{color:#3b4468!important}
 label,[data-testid="stWidgetLabel"] p,[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li{color:var(--navy)}
-[data-testid="stFileUploaderDropzone"] *{color:var(--navy)}
 [data-testid="stExpander"] summary,[data-testid="stExpander"] summary *{color:var(--navy)!important}
 [data-testid="stAlert"] *{color:var(--navy)!important}
 .legenda{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
 .legenda .item{display:inline-flex;align-items:center;gap:7px;background:#fff;color:var(--navy);border:2px solid var(--navy);
  border-radius:999px;padding:2px 12px 2px 8px;font-weight:800;font-size:.86rem}
 .legenda .sw{display:inline-block;width:26px;height:8px;border-radius:5px;border:1.5px solid #2b2b2b}
+
+/* ===== Kontras eksplisit: setiap latar punya warna teks sendiri (tidak mengandalkan tema bawaan) ===== */
+button,[data-testid^="stBaseButton"]{background:#fff!important;color:var(--navy)!important;border:2.5px solid var(--navy)!important;
+ border-radius:14px!important;font-weight:800!important;box-shadow:3px 3px 0 var(--navy)}
+button *,[data-testid^="stBaseButton"] *{color:inherit!important;fill:currentColor!important}
+button:hover,[data-testid^="stBaseButton"]:hover{background:var(--sun)!important;color:var(--navy)!important}
+button:disabled,[data-testid^="stBaseButton"]:disabled{background:#ececec!important;color:#4a4f63!important;box-shadow:none}
+[data-testid="stBaseButton-primary"]{background:#c62828!important;color:#fff!important}
+[data-testid="stBaseButton-primary"]:hover{background:var(--sun)!important;color:var(--navy)!important}
+[data-testid="stFileUploaderDropzone"] button{background:#fff!important;color:var(--navy)!important}
+[data-testid="stFileUploaderDropzone"] small,[data-testid="stFileUploaderDropzone"] span,
+[data-testid="stFileUploaderDropzone"] div{color:var(--navy)}
+[data-testid="stFileUploaderFile"],[data-testid="stFileUploaderFile"] *{color:var(--navy)!important}
+[data-testid="stFileUploaderFile"]{background:#fff;border-radius:12px}
+[data-testid="stFileUploaderFile"] button{box-shadow:none;border:none!important;background:transparent!important}
+
+input,textarea,[data-baseweb="input"],[data-baseweb="base-input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{
+ background:#fff!important;color:var(--navy)!important;-webkit-text-fill-color:var(--navy)!important}
+[data-baseweb="select"] *,[data-baseweb="input"] *{color:var(--navy)!important}
+[data-baseweb="select"] svg,[data-baseweb="input"] svg{fill:var(--navy)!important}
+[data-baseweb="popover"],[data-baseweb="popover"] ul,[data-baseweb="menu"]{background:#fff!important;color:var(--navy)!important}
+[data-baseweb="popover"] li,[role="listbox"] li,[role="option"]{background:#fff!important;color:var(--navy)!important}
+[data-baseweb="popover"] li:hover,[role="option"]:hover,[role="option"][aria-selected="true"]{background:var(--sun)!important;color:var(--navy)!important}
+[data-baseweb="tag"]{background:var(--sun)!important;color:var(--navy)!important}
+[data-baseweb="tag"] *{color:var(--navy)!important}
+[data-testid="stCheckbox"] label,[data-testid="stCheckbox"] label *,[data-testid="stRadio"] label *{color:var(--navy)!important}
+[data-testid="stNumberInput"] button{background:var(--sun)!important;color:var(--navy)!important;box-shadow:none}
+[data-testid="stTooltipContent"],[data-baseweb="tooltip"] *{background:var(--navy)!important;color:#fff!important}
+[data-testid="stMetricValue"],[data-testid="stMetricLabel"],[data-testid="stMetricLabel"] *{color:var(--navy)!important}
+[data-testid="stSlider"] *{color:var(--navy)}
+[data-testid="stProgress"] *{color:var(--navy)!important}
+[data-testid="stToast"],[data-testid="stToast"] *{color:var(--navy)!important}
+[data-testid="stTable"] *,[data-testid="stDataFrame"] *{color:var(--navy)}
+.leaflet-tooltip,.leaflet-popup-content-wrapper{background:#fff!important;color:#1a1f36!important;border:2px solid #1a1f36;font-weight:700}
+.leaflet-control-layers,.leaflet-control-layers label{background:#fff;color:#1a1f36}
+
+[data-testid="stSegmentedControl"] button[aria-checked="true"],[data-testid="stSegmentedControl"] button[aria-pressed="true"],
+[data-testid="stSegmentedControl"] button[kind="segmented_controlActive"],[data-testid="stBaseButton-segmented_controlActive"]{
+ background:#1a1f36!important;color:#fff!important}
+[data-testid="stSegmentedControl"] button[aria-checked="true"] *,[data-testid="stSegmentedControl"] button[aria-pressed="true"] *,
+[data-testid="stBaseButton-segmented_controlActive"] *{color:#fff!important}
+[data-testid="stSegmentedControl"] button:hover{background:#ffd166!important;color:#1a1f36!important}
+[data-testid="stSegmentedControl"] button:hover *{color:#1a1f36!important}
 </style>
 """
 
