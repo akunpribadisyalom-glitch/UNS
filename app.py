@@ -28,8 +28,7 @@ TC = ingest.TITIK_COLS
 JENIS_LBL = {"rs": "🏥 RS", "posko": "⛺ posko", "depot": "🚜 alat berat", "quarry": "⛏️ quarry",
              "permukiman": "🏠 permukiman"}
 
-st.markdown("<div class='hero'><h1>🛣️ Jalan Siaga</h1>"
-            "<p>Unggah peta jalan berisi probabilitas banjir (fl_max), tandai jalan yang putus. Urutan dan animasi perbaikan muncul otomatis.</p></div>",
+st.markdown("<div class='hero'><h1>🛣️ Jalan Siaga</h1>",
             unsafe_allow_html=True)
 
 
