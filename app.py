@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from shapely.geometry import shape
+from pyproj import Transformer
 from streamlit_folium import st_folium
 
 import animasi as an
@@ -15,6 +16,7 @@ import pemulihan as pm
 import peta
 import restorasi as rt
 import scoring as sc
+import simulasi as sim
 
 st.set_page_config(page_title="Jalan Siaga", page_icon="🛣️", layout="wide", initial_sidebar_state="collapsed")
 gaya.terapkan()
@@ -50,8 +52,8 @@ with st.container(key="kartu_unggah"):
     st.markdown("### 1️⃣ Unggah")
     fs = st.file_uploader(
         "Seret semua file sekaligus. Jalan wajib; RS, posko, alat berat, quarry, permukiman, area banjir/longsor, "
-        "dan data perjalanan boleh menyusul. Perannya dibaca otomatis.",
-        accept_multiple_files=True, type=["geojson", "json", "gpkg", "zip", "csv", "xlsx"], key="up")
+        "data perjalanan, dan DEM (.tif, untuk simulasi hujan) boleh menyusul. Perannya dibaca otomatis.",
+        accept_multiple_files=True, type=["geojson", "json", "gpkg", "zip", "csv", "xlsx", "tif", "tiff"], key="up")
     if st.button("🎈 Coba dengan data contoh", key="btn_demo"):
         S["demo"] = True
     demo = bool(S.get("demo")) and not fs
@@ -68,7 +70,7 @@ with st.container(key="kartu_unggah"):
 
     if demo:
         g0, t0, p0 = ingest.contoh()
-        R = {"jalan": g0, "titik": t0, "gangguan": [], "od": None, "catatan": []}
+        R = {"jalan": g0, "titik": t0, "gangguan": [], "od": None, "catatan": [], "dem": None}
     else:
         R = ingest.rakit([(n_, p_, o_) for n_, p_, o_, _ in items])
 
@@ -94,6 +96,8 @@ with st.container(key="kartu_unggah"):
         chips.append(gaya.chip(f"🌊 area gangguan × {len(R['gangguan'])}", "ok"))
     if R["od"] is not None:
         chips.append(gaya.chip(f"🚗 perjalanan × {len(R['od'])}", "ok"))
+    if R.get("dem") is not None:
+        chips.append(gaya.chip("🏔️ DEM terbaca", "ok"))
     chips += [gaya.chip(c_, "warn") for c_ in R["catatan"]]
     st.markdown("".join(chips), unsafe_allow_html=True)
     if demo:
@@ -137,6 +141,7 @@ if R["gangguan"] and S.get("rt_gsig") != sig_g:           # area gangguan dari f
 
 # =============================================================== tata letak (urutan tampil)
 c_bencana = st.container(key="kartu_bencana")
+c_sim = st.expander("🌧️ Simulasi banjir dari curah hujan (butuh DEM)", expanded=bool(R.get("dem")) or demo)
 c_main = st.container()
 c_titik = st.expander("📍 Daftar titik (RS, posko, alat berat, quarry, permukiman)")
 c_lain = st.expander("📊 Peringkat krusialitas, dasar ilmiah, dan unduhan")
@@ -189,7 +194,7 @@ with c_adv:
 with c_bencana:
     st.markdown("### 2️⃣ Banjir")
     st.markdown("Bahaya dibaca dari **probabilitas banjir (`fl_max`)** saja. Akses warga ke **rumah sakit** dan posko didahulukan.")
-    if fl == "(tidak ada)":
+    if fl == "(tidak ada)" and not S.get("rt_pakai_fl"):
         st.error("Kolom probabilitas banjir (fl_max) tidak ditemukan di file jalan, jadi semua ruas tampil hijau. "
                  "Pilih kolomnya di ⚙️ Pengaturan lanjutan. Kolom yang ada: " + ", ".join(map(str, kol)))
     ulang = st.button("🔄 Cari ulang nama jalan", key="rt_cari_ulang", disabled=not cari_on or demo)
@@ -208,15 +213,109 @@ with c_bencana:
     elif S.get("rt_njcat"):
         st.caption(S["rt_njcat"] + " Pencocokan memakai jalan OSM terdekat (≤25 m), jadi sesekali bisa keliru di persimpangan.")
 
+# =============================================================== 2b. SIMULASI HUJAN -> BANJIR
+with c_sim:
+    st.markdown("Masukkan curah hujan, aplikasi mengalirkan air di atas **DEM** dan menghitung **tinggi genangan** "
+                "di tiap titik, lalu **tinggi banjir di setiap ruas jalan**.")
+    ada_dem = demo or R.get("dem") is not None
+    if not ada_dem:
+        st.info("Belum ada DEM. Unggah raster ketinggian (**GeoTIFF .tif**, mis. DEMNAS 8 m atau SRTM/Copernicus 30 m) "
+                "di langkah 1 bersama file jalan. DEM harus menutupi seluruh area jalan dan punya CRS. "
+                "Atau klik **Coba dengan data contoh** untuk melihat cara kerjanya.")
+    s1, s2, s3 = st.columns(3)
+    hujan = s1.number_input("Curah hujan total (mm)", 1, 1500, 150, 10, key="rt_hujan",
+                            help="Total hujan selama kejadian. Contoh: 100 mm/hari = lebat sekali, 150+ mm = ekstrem.")
+    durasi_h = s2.number_input("Lama hujan (jam)", 0.5, 72.0, 3.0, 0.5, key="rt_durh")
+    cn_ = s3.slider("Curve Number (CN)", 40, 98, 85, key="rt_cn",
+                    help="Makin besar makin banyak hujan jadi limpasan. Permukiman padat/aspal 90-98, lahan campuran ~80, "
+                         "sawah/hutan 60-70.")
+    st.markdown("**Asumsi lanjutan**")
+    v1, v2, v3 = st.columns(3)
+    drain_ = v1.number_input("Kapasitas drainase (mm/jam)", 0.0, 100.0, 5.0, 1.0, key="rt_drain",
+                             help="Hujan yang terserap saluran/infiltrasi. Naikkan bila drainase kota baik.")
+    manning_ = v2.number_input("Kekasaran Manning (n)", 0.01, 0.2, 0.05, 0.01, key="rt_manning")
+    res_ = v3.number_input("Ukuran grid maksimum (sel)", 100, 500, 250, 50, key="rt_gridmaks",
+                           help="Makin besar makin detail tetapi makin lama.")
+    v4, v5, v6 = st.columns(3)
+    amb_t = v4.number_input("Terganggu bila tinggi ≥ (m)", 0.02, 2.0, sim.AMBANG_AWAL[0], 0.05, key="rt_amb_t",
+                            help="Sekitar 15 cm: mobil kecil mulai sulit lewat.")
+    amb_p = v5.number_input("Putus bila tinggi ≥ (m)", 0.05, 3.0, sim.AMBANG_AWAL[1], 0.05, key="rt_amb_p",
+                            help="Sekitar 30 cm ke atas: kebanyakan kendaraan berhenti.")
+    penuh_m = v6.number_input("Tinggi dianggap 100% rawan (m)", 0.1, 3.0, 0.5, 0.1, key="rt_penuh",
+                              help="Dipakai bila hasil simulasi dijadikan pengganti fl_max.")
+
+    if st.button("▶️ Jalankan simulasi", key="rt_simrun", disabled=not ada_dem):
+        try:
+            utm_crs = S["rt_utm"].crs
+            ll2utm = Transformer.from_crs(4326, utm_crs, always_xy=True).transform
+            batas = tuple(float(x) for x in gdf.total_bounds)
+            if demo:
+                z_, dx_, asal_ = sim.dem_contoh(batas, ll2utm, 140)
+            else:
+                z_, dx_, asal_ = sim.baca_dem(R["dem"], utm_crs, batas, int(res_))
+            z_ = sim.isi_kosong(z_)
+            bar = st.progress(0.0, text="Mengalirkan air di atas DEM...")
+            hs = sim.simulasi(z_, dx_, hujan, durasi_h, cn_, drain_, manning_,
+                              progres=lambda f: bar.progress(min(f, 1.0), text=f"Mengalirkan air... {f:.0%}"))
+            bar.empty()
+            dmaks, dp90 = sim.kedalaman_ruas(list(S["rt_utm"].geometry), hs["h_maks"], dx_, asal_)
+            S["rt_sim"] = {"hs": hs, "dx": dx_, "asal": asal_, "dmaks": dmaks, "dp90": dp90, "hujan": hujan,
+                           "durasi": durasi_h, "cn": cn_, "tgl": pd.Timestamp.now().strftime("%H:%M:%S")}
+            S["rt_simt"] = "Maksimum"
+        except Exception as e:
+            st.error(f"Simulasi gagal: {e}")
+
+    sr = S.get("rt_sim")
+    if sr:
+        kls = sim.kelas_kedalaman(sr["dmaks"], (amb_t, amb_p))
+        n_put, n_lam = int((kls == "putus").sum()), int((kls == "lambat").sum())
+        hs = sr["hs"]
+        st.markdown("".join([
+            gaya.chip(f"🌧️ {sr['hujan']:.0f} mm / {sr['durasi']:g} jam · CN {sr['cn']}", "ok"),
+            gaya.chip(f"🔴 {n_put} ruas putus (≥{amb_p:.2f} m)", "warn" if n_put else "ok"),
+            gaya.chip(f"🟠 {n_lam} ruas terganggu (≥{amb_t:.2f} m)", "warn" if n_lam else "ok"),
+            gaya.chip(f"💧 tinggi maks {hs['h_maks'].max():.2f} m", "ok")]), unsafe_allow_html=True)
+        c1, c2 = st.columns([3, 2])
+        pilihan = ["Maksimum"] + [f"jam {t_:.1f}" for t_ in hs["waktu_jam"]]
+        c1.select_slider("Genangan pada waktu", pilihan, key="rt_simt",
+                         help="Maksimum = kedalaman tertinggi selama simulasi. Geser untuk melihat genangan naik dan surut.")
+        c2.checkbox("Tampilkan genangan di peta", True, key="rt_simshow")
+        pakai_fl = st.checkbox("Pakai tinggi banjir simulasi sebagai probabilitas banjir (warna jalan & skor)", False,
+                               key="rt_pakai_fl", help="Menggantikan fl_max. Tanpa ini, warna jalan tetap dari fl_max.")
+        if st.button("✅ Terapkan ke ruas putus/terganggu (menggantikan tanda sebelumnya)", key="rt_simterap"):
+            S["rt_putus"] = {int(i) for i in np.where(kls == "putus")[0]}
+            S["rt_lambat"] = {int(i) for i in np.where(kls == "lambat")[0]}
+            S["rt_res"] = None
+            st.rerun()
+        kunci_id = idc if idc != "(nomor urut)" else "no_ruas"
+        nomor = gdf[idc].values if idc != "(nomor urut)" else (gdf.index + 1).values
+        tabel_sim = pd.DataFrame({kunci_id: nomor, "tinggi_banjir_maks_m": sr["dmaks"].round(3),
+                                  "tinggi_banjir_p90_m": sr["dp90"].round(3),
+                                  "fl_max": sim.prob_dari_kedalaman(sr["dmaks"], penuh_m).round(3),
+                                  "status": kls})
+        st.download_button("⬇️ Hasil simulasi per ruas (CSV)", tabel_sim.to_csv(index=False).encode("utf-8"),
+                           "simulasi_banjir_ruas.csv", "text/csv",
+                           help="Bisa diunggah kembali: kolom fl_max baru menggantikan fl_max di jalan lewat kolom nomor ruas.")
+        if not hs["selesai"]:
+            st.warning("Simulasi dihentikan sebelum waktu habis (batas langkah). Perkecil ukuran grid atau lama hujan.")
+        st.caption("Model: limpasan SCS-CN, lalu aliran 2D inersia lokal (Bates dkk. 2010) dengan kekasaran Manning. "
+                   "Air keluar lewat tepi peta. Cocok untuk skrining dan perencanaan; hasil bergantung pada resolusi DEM, "
+                   "CN, dan drainase. Bangunan, gorong-gorong, dan sungai tidak dimodelkan terpisah, jadi sungai yang "
+                   "meluap dari hulu di luar peta tidak ikut terhitung. Kalibrasi dengan jejak banjir bila ada.")
+
 # =============================================================== skor (hanya probabilitas banjir, fl_max)
 nol = pd.Series(0.0, index=gdf.index)
+pakai_sim = bool(S.get("rt_sim")) and bool(S.get("rt_pakai_fl"))
+punya_h = fl != "(tidak ada)" or pakai_sim
 Hraw = sc.hazard(gdf, [fl], "max", None, False, True) if fl != "(tidak ada)" else nol
+if pakai_sim:
+    Hraw = pd.Series(sim.prob_dari_kedalaman(S["rt_sim"]["dmaks"], S.get("rt_penuh", 0.5)), index=gdf.index)
 Sx = sc.status(gdf[st_col], nilai) if st_col != "(tidak ada)" else nol
 K = sc.rata_minmax(gdf, konek, inv) if konek else nol
 D = sc.rata_minmax(gdf, dens) if dens else nol
-w = {"h": wh if fl != "(tidak ada)" else 0, "s": ws if st_col != "(tidak ada)" else 0, "k": wk if konek else 0,
+w = {"h": wh if punya_h else 0, "s": ws if st_col != "(tidak ada)" else 0, "k": wk if konek else 0,
      "d": wd if dens else 0}
-hasil = sc.hitung(Hraw, Sx, K, D, w, mode_skor if fl != "(tidak ada)" else "add")
+hasil = sc.hitung(Hraw, Sx, K, D, w, mode_skor if punya_h else "add")
 kelas_s = sc.kelas_banjir(Hraw, (b_kuning, b_merah))
 
 # --- nomor ruas dan nama jalan
@@ -241,6 +340,8 @@ hasil["kelas"] = kelas_s.values
 hasil["yakin_nama_pct"] = yakin.values
 g = gdf[["geometry"]].copy()
 g["nama"], g["kelas"], g["skor"] = nama.values, kelas_s.values, Hraw.values
+if S.get("rt_sim"):
+    g["banjir_m"] = S["rt_sim"]["dmaks"]
 kelas_graf = rt.kelas_jalan(gdf[st_col]) if st_col != "(tidak ada)" else pd.Series("lainnya", index=gdf.index)
 G = pm.graf(gdf, tuple(kelas_graf), tuple(sorted(rt.KECEPATAN.items())), S["rt_sig"], 5)
 
@@ -329,6 +430,16 @@ with c_main:
         m = peta.dasar(g, S["rt_view"])
         peta.jalan_krusial(m, g)
         peta.gangguan(m, gdf, nama, P, L, rep)
+        if S.get("rt_sim") and S.get("rt_simshow", True):
+            sr_ = S["rt_sim"]
+            t_pilih = S.get("rt_simt", "Maksimum")
+            opsi_t = ["jam %.1f" % t for t in sr_["hs"]["waktu_jam"]]
+            h_ = sr_["hs"]["bingkai"][opsi_t.index(t_pilih)] if t_pilih in opsi_t else sr_["hs"]["h_maks"]
+            utm_c = S["rt_utm"].crs
+            f_ll = Transformer.from_crs(4326, utm_c, always_xy=True).transform
+            f_utm = Transformer.from_crs(utm_c, 4326, always_xy=True).transform
+            h_ll, bts = sim.ke_lonlat(h_, sr_["dx"], sr_["asal"], f_ll, f_utm)
+            peta.genangan(m, sim.png_bytes(sim.gambar_rgba(h_ll)), bts)
         out = None
         if tampil == "animasi":
             tp_ = ti["tp"]
@@ -368,6 +479,9 @@ with c_main:
             (sc.WARNA["Aman"], "Aman", False),
             (gaya.KORAL, "Putus", True), (gaya.AMBER, "Terganggu", True), (gaya.HIJAU, "Sudah diperbaiki", False)]),
             unsafe_allow_html=True)
+        if S.get("rt_sim") and S.get("rt_simshow", True):
+            st.caption("🌊 Genangan simulasi: biru muda = dangkal, biru tua = dalam, ungu = ≥1,5 m. "
+                       "Arahkan kursor ke ruas untuk melihat tinggi banjirnya.")
         if tampil == "urutan":
             st.caption("Lingkaran putih bernomor di peta = urutan perbaikan.")
 

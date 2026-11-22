@@ -12,7 +12,7 @@ import streamlit as st
 from shapely.geometry import LineString
 
 TITIK_COLS = ["nama", "jenis", "lat", "lon", "bobot"]
-PERAN = ["otomatis", "jalan", "titik", "gangguan", "perjalanan", "atribut", "abaikan"]
+PERAN = ["otomatis", "jalan", "titik", "gangguan", "perjalanan", "atribut", "dem", "abaikan"]
 
 K_TRIP = r"perjalanan|trip|rute|(^|[^a-z])od([^a-z]|$)"
 K_GANGGUAN = r"banjir|genang|longsor|gangguan|putus|rusak|terdampak|bencana|flood|landslide"
@@ -84,6 +84,8 @@ def tebak_peran(nama, obj):
 def baca_berkas(f, epsg=32749):
     """Return (peran_tebakan, objek). Objek GeoDataFrame (EPSG:4326) atau DataFrame."""
     nm = f.name.lower()
+    if nm.endswith((".tif", ".tiff")):                     # DEM (raster ketinggian), dibaca nanti oleh simulasi.py
+        return "dem", f.getvalue()
     if nm.endswith((".csv", ".xlsx", ".xls")):
         t = baca_tabel(f.name, f.getvalue())
         return tebak_peran(f.name, t), t
@@ -144,7 +146,7 @@ def od_dari_garis(d):
 
 def rakit(items):
     """items = [(nama, peran_efektif, objek)] -> dict hasil + daftar catatan."""
-    jalan, titik, gang, od, attr, cat = [], [], [], [], [], []
+    jalan, titik, gang, od, attr, cat, dem = [], [], [], [], [], [], []
     for nama, peran, obj in items:
         try:
             if peran == "jalan" and isinstance(obj, gpd.GeoDataFrame):
@@ -157,6 +159,8 @@ def rakit(items):
                 od.append(od_dari_garis(obj) if isinstance(obj, gpd.GeoDataFrame) else obj)
             elif peran == "atribut" and not isinstance(obj, gpd.GeoDataFrame):
                 attr.append(obj)
+            elif peran == "dem" and isinstance(obj, (bytes, bytearray)):
+                dem.append(bytes(obj))
             elif peran != "abaikan":
                 cat.append(f"{nama}: tipe data tidak cocok untuk peran '{peran}', diabaikan.")
         except Exception as e:  # file bermasalah tidak boleh menjatuhkan aplikasi
@@ -171,7 +175,8 @@ def rakit(items):
         for t in attr:
             gdf = gabung_tabel(gdf, t)
     return {"jalan": gdf, "titik": pd.concat(titik, ignore_index=True) if titik else None,
-            "gangguan": gang, "od": pd.concat(od, ignore_index=True) if od else None, "catatan": cat}
+            "gangguan": gang, "od": pd.concat(od, ignore_index=True) if od else None, "catatan": cat,
+            "dem": dem[0] if dem else None}
 
 
 def gabung_tabel(gdf, t):

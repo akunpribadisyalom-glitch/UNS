@@ -5,7 +5,7 @@ import pandas as pd
 KELAS = ["Rawan tinggi", "Rawan sedang", "Aman"]
 WARNA = {"Rawan tinggi": "#d62828", "Rawan sedang": "#f2b705", "Aman": "#2e9d57"}
 LEBAR = {"Rawan tinggi": 6, "Rawan sedang": 4.5, "Aman": 3}
-BATAS_AWAL = (0.4, 0.6)   # (batas kuning, batas merah)
+BATAS_AWAL = (0.33, 0.66)   # (batas kuning, batas merah)
 
 
 def kelas_banjir(p, batas=BATAS_AWAL):

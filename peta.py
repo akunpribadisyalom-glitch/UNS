@@ -42,13 +42,18 @@ def _geo(m, d, warna, lebar, tip, dash=None, op=.95, fields=("nama", "kelas"), a
 def jalan_krusial(m, g):
     """Jalan diwarnai menurut kelas banjir. Tiap garis diberi tepi gelap tipis agar kuning/hijau tetap terbaca."""
     for k in reversed(sc.KELAS):                       # hijau dulu, merah di atas
-        sub = g[g["kelas"] == k][["nama", "kelas", "skor", "geometry"]].copy()
+        ada_tinggi = "banjir_m" in g.columns
+        sub = g[g["kelas"] == k][["nama", "kelas", "skor"] + (["banjir_m"] if ada_tinggi else []) + ["geometry"]].copy()
         if sub.empty:
             continue
         sub["skor"] = sub["skor"].round(3)
         w, lb = KRUS[k]
+        f_, a_ = ["nama", "kelas", "skor"], ["Ruas", "Kelas banjir", "Probabilitas"]
+        if ada_tinggi:
+            sub["banjir_m"] = sub["banjir_m"].round(2)
+            f_.append("banjir_m"), a_.append("Tinggi banjir simulasi (m)")
         _geo(m, sub, gaya.CASING, lb + 2.5, False, op=.55)
-        _geo(m, sub, w, lb, True, fields=("nama", "kelas", "skor"), alias=("Ruas", "Kelas banjir", "Probabilitas"))
+        _geo(m, sub, w, lb, True, fields=tuple(f_), alias=tuple(a_))
 
 
 def gangguan(m, gdf, nama, P, L, rep=frozenset()):
@@ -120,3 +125,12 @@ def tempuh(m, gdf, M, tbl, jalur, pilih):
     garis_garis(m, gdf, j["normal"], gaya.KERJA, 11, "rute normal", op=.35)
     garis_garis(m, gdf, j["terdampak"], gaya.UNGU, 6, "rute terdampak")
     garis_garis(m, gdf, j["pulih"], gaya.HIJAU, 3, "rute sekarang")
+
+
+def genangan(m, png, batas, nama="Genangan banjir (simulasi)"):
+    """Lapisan genangan hasil simulasi. png = bytes PNG RGBA, batas = (barat, selatan, timur, utara) lon/lat."""
+    import base64
+    w, s_, e, n = batas
+    uri = "data:image/png;base64," + base64.b64encode(png).decode()
+    folium.raster_layers.ImageOverlay(image=uri, bounds=[[s_, w], [n, e]], opacity=.85, name=nama,
+                                      interactive=False, zindex=5).add_to(m)
