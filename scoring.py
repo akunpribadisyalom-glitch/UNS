@@ -89,3 +89,25 @@ def hitung(H, S, K, D, w, mode="mul"):
         skor = (w["h"] * minmax(H) + w["s"] * S + w["k"] * K + w["d"] * D) / ((w["h"] + cs) or 1.0)
     urut = skor.rank(ascending=False, method="first")
     return pd.DataFrame({"peringkat": urut.astype(int), "skor": skor})
+
+
+# ---- Kelas kekritisan menurut persentil peringkat (bukan ambang skor): q = peringkat / N.
+# Sangat kritis 0 < q <= 0,10 (10% teratas), Tinggi 0,10 < q <= 0,30, Sedang 0,30 < q <= 0,60, Rendah 0,60 < q <= 1.
+KELAS_PERSEN = ["Sangat kritis", "Tinggi", "Sedang", "Rendah"]
+BATAS_PERSEN = (0.10, 0.30, 0.60)
+WARNA.update({"Sangat kritis": "#d62828", "Tinggi": "#f28c00", "Sedang": "#f2b705", "Rendah": "#2e9d57"})
+LEBAR.update({"Sangat kritis": 6, "Tinggi": 5, "Sedang": 4, "Rendah": 3})
+
+
+def persentil(peringkat):
+    """q_i = r_i / N."""
+    p = pd.Series(peringkat)
+    return p / len(p)
+
+
+def kelas_persentil(peringkat, batas=BATAS_PERSEN):
+    """Peringkat ruas (1 = paling kritis) -> Sangat kritis / Tinggi / Sedang / Rendah menurut persentil kumulatif q = r / N."""
+    q = persentil(peringkat)
+    a, b, c = batas
+    return pd.Series(["Sangat kritis" if x <= a + 1e-12 else "Tinggi" if x <= b + 1e-12 else "Sedang" if x <= c + 1e-12 else "Rendah"
+                      for x in q], index=q.index)

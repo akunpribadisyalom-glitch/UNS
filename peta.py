@@ -10,7 +10,7 @@ import scoring as sc
 TILE = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
 SAT = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 # Warna jalan menurut probabilitas banjir: merah (rawan), kuning (sedang), hijau (aman).
-KRUS = {k: (sc.WARNA[k], sc.LEBAR[k]) for k in sc.KELAS}
+KRUS = {k: (sc.WARNA[k], sc.LEBAR[k]) for k in list(sc.KELAS) + list(sc.KELAS_PERSEN)}
 EMOJI = {"rs": "🏥", "posko": "⛺", "depot": "🚜", "quarry": "⛏️", "permukiman": "🏠", "sungai": "🌊", "pompa": "🔧",
          "drainase": "🕳️", "tinggikan": "⬆️"}
 LABEL = {"rs": "RS", "posko": "Posko", "depot": "Alat berat", "quarry": "Quarry", "permukiman": "Permukiman",
@@ -41,16 +41,16 @@ def _geo(m, d, warna, lebar, tip, dash=None, op=.95, fields=("nama", "kelas"), a
     ).add_to(m)
 
 
-def jalan_krusial(m, g):
+def jalan_krusial(m, g, urutan=None):
     """Jalan diwarnai menurut kelas banjir. Tiap garis diberi tepi gelap tipis agar kuning/hijau tetap terbaca."""
-    for k in reversed(sc.KELAS):                       # hijau dulu, merah di atas
+    for k in reversed(urutan or sc.KELAS):             # hijau dulu, merah di atas
         ada_tinggi = "banjir_m" in g.columns
         sub = g[g["kelas"] == k][["nama", "kelas", "skor"] + (["banjir_m"] if ada_tinggi else []) + ["geometry"]].copy()
         if sub.empty:
             continue
         sub["skor"] = sub["skor"].round(3)
         w, lb = KRUS[k]
-        f_, a_ = ["nama", "kelas", "skor"], ["Ruas", "Kelas banjir", "Probabilitas"]
+        f_, a_ = ["nama", "kelas", "skor"], ["Ruas", "Kelas", "Probabilitas/skor"]
         if ada_tinggi:
             sub["banjir_m"] = sub["banjir_m"].round(2)
             f_.append("banjir_m"), a_.append("Tinggi banjir simulasi (m)")

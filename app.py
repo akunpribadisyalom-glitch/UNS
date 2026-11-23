@@ -188,7 +188,7 @@ DEFAULTS = {"rt_preset": "Pinggiran kota", "rt_hujan": 150, "rt_durh": 3.0, "rt_
             "rt_amb_r": sim.AMBANG_AWAL[2], "rt_penuh": 0.5, "rt_sedimen": 4.0, "rt_tglama": 12.0, "rt_bk": sc.BATAS_AWAL[0],
             "rt_bm": sc.BATAS_AWAL[1], "rt_sungai_q": 20.0, "rt_sungai_tp": 2.0, "rt_sungai_lama": 8.0, "rt_pasang_sisi": "Selatan",
             "rt_pasang_puncak": 0.8, "rt_pasang_rentang": 1.0, "rt_pasang_jam": 3.0, "rt_kru": 2, "rt_alat": 1, "rt_alpha": 0.75,
-            "rt_pakai_fl": True, "rt_simt": "Maksimum"}
+            "rt_pakai_fl": True, "rt_simt": "Maksimum", "rt_dasar": "persen"}
 for k_, v_ in {**PRESET["Pinggiran kota"], **DEFAULTS}.items():
     S.setdefault(k_, v_)
 S.setdefault("rt_epsg", 32749)
@@ -358,6 +358,10 @@ with tab_sim:
         idc = k2.selectbox("Kolom nomor ruas", ["(nomor urut)"] + kol, key="rt_idc")
         kj = k3.selectbox("Kolom nama jalan (jika sudah ada)", ["(tidak ada)"] + kol, key="rt_kj")
         k4.number_input("EPSG bila CRS file tak terbaca", 1000, 99999, key="rt_epsg")
+        st.segmented_control("Dasar kelas kekritisan dan warna jalan", ["persen", "ambang"], key="rt_dasar",
+                             format_func={"persen": "Persentil peringkat (10/20/30/40%)", "ambang": "Ambang nilai (probabilitas atau tinggi air)"}.get,
+                             help="Persentil: 10% ruas teratas Sangat kritis (merah), 20% berikutnya Tinggi (oranye), 30% Sedang (kuning), "
+                                  "40% terbawah Rendah (hijau); q = peringkat / jumlah ruas. Bersifat relatif, bukan ambang bahaya absolut.")
         b1, b2 = st.columns(2)
         b_kuning = b1.number_input("Batas kuning (probabilitas fl_max ≥)", 0.01, 0.99, step=0.01, key="rt_bk")
         b_merah = b2.number_input("Batas merah (probabilitas fl_max ≥)", 0.01, 1.0, step=0.01, key="rt_bm")
@@ -708,7 +712,10 @@ K = sc.rata_minmax(gdf, konek, inv) if konek else nol
 D = sc.rata_minmax(gdf, dens) if dens else nol
 w = {"h": wh if punya_h else 0, "s": ws if st_col != "(tidak ada)" else 0, "k": wk if konek else 0, "d": wd if dens else 0}
 hasil = sc.hitung(Hraw, Sx, K, D, w, mode_skor if punya_h else "add")
-if pakai_sim:
+mode_persen = S.get("rt_dasar", "persen") == "persen"
+if mode_persen:
+    kelas_s = sc.kelas_persentil(hasil["peringkat"])
+elif pakai_sim:
     kelas_s = sc.kelas_kedalaman(sr["dmaks"], (amb_t, amb_g)).set_axis(gdf.index)
 else:
     kelas_s = sc.kelas_banjir(Hraw, (S["rt_bk"], S["rt_bm"]))
@@ -732,6 +739,7 @@ nama = no_ruas.where(jalan == "", no_ruas + " · " + jalan)
 hasil.insert(0, "ruas", no_ruas)
 hasil.insert(1, "nama_jalan", jalan)
 hasil["prob_banjir"] = Hraw.values
+hasil["persentil_q"] = sc.persentil(hasil["peringkat"]).round(3).values
 hasil["kelas"] = kelas_s.values
 hasil["yakin_nama_pct"] = yakin.values
 g = gdf[["geometry"]].copy()
@@ -866,7 +874,7 @@ with kiri:
                               format_func=lambda k: f"jam {kej['waktu'][k]:.0f}")
 
     m = peta.dasar(g, S["rt_view"])
-    peta.jalan_krusial(m, g)
+    peta.jalan_krusial(m, g, sc.KELAS_PERSEN if mode_persen else None)
     if tampil != "banjir":
         peta.gangguan(m, gdf, nama, P, L, rep, T)
     if R["sungai"] is not None:
@@ -918,7 +926,11 @@ with kiri:
         folium.LayerControl(collapsed=True).add_to(m)
         out = st_folium(m, height=600, use_container_width=True, key=f"rt_map_{S['rt_sig']}_{S['rt_mapver']}",
                         returned_objects=["last_clicked", "all_drawings", "center", "zoom"])
-    if sr is not None and S.get("rt_pakai_fl"):
+    if mode_persen:
+        jml = kelas_s.value_counts()
+        leg = [(sc.WARNA[k_], f"{k_} ({lb_}, {int(jml.get(k_, 0))} ruas)", False) for k_, lb_ in
+               zip(sc.KELAS_PERSEN, ("10% teratas", "20% berikutnya", "30% berikutnya", "40% terbawah"))]
+    elif sr is not None and S.get("rt_pakai_fl"):
         leg = [(sc.WARNA["Rawan tinggi"], f"Air ≥{amb_g * 100:.0f} cm", False),
                (sc.WARNA["Rawan sedang"], f"{amb_t * 100:.0f}–{amb_g * 100:.0f} cm", False),
                (sc.WARNA["Aman"], f"< {amb_t * 100:.0f} cm", False)]
@@ -1171,11 +1183,12 @@ with tab_hasil:
     st.markdown("### Peringkat ruas")
     tabel = hasil.sort_values("peringkat")
     topn = st.number_input("Tampilkan N ruas teratas", 1, len(tabel), min(25, len(tabel)), key="rt_topn")
-    kolom_tabel = ["peringkat", "ruas", "nama_jalan", "prob_banjir", "kelas", "skor", "yakin_nama_pct"]
+    kolom_tabel = ["peringkat", "persentil_q", "ruas", "nama_jalan", "prob_banjir", "kelas", "skor", "yakin_nama_pct"]
     st.dataframe(tabel[kolom_tabel].head(int(topn)), hide_index=True, width="stretch", column_config={
         "prob_banjir": st.column_config.ProgressColumn("prob. banjir" + (" (dari tinggi simulasi)" if pakai_sim else " (fl_max)"),
                                                        min_value=0.0, max_value=1.0, format="%.2f"),
         "skor": st.column_config.NumberColumn("skor", format="%.3f"),
+        "persentil_q": st.column_config.NumberColumn("q = r/N", format="%.3f", help="Persentil kumulatif peringkat"),
         "yakin_nama_pct": st.column_config.NumberColumn("keyakinan nama (%)", format="%.0f",
                                                         help="Seberapa konsisten nama jalan OSM sepanjang ruas ini")})
     g1, g2 = st.columns(2)
@@ -1268,7 +1281,9 @@ with tab_hasil:
         st.download_button("⬇️ Ringkasan (PDF)", S["rt_pdf"], "ringkasan_jalan_siaga.pdf", "application/pdf")
 
     st.markdown("""
-**Warna jalan:** bila simulasi dipakai, dari tinggi air maksimum di ruas (hijau < ambang terganggu, kuning sampai ambang tergenang, merah di atasnya).
+**Kelas kekritisan (bawaan):** dari persentil peringkat skor, q = r/N: Sangat kritis (merah) 10% teratas, Tinggi (oranye) 20% berikutnya, Sedang (kuning) 30% berikutnya, Rendah (hijau) 40% terbawah. Pembagian ini relatif, bukan ambang bahaya absolut; ganti ke ambang nilai di Pengaturan rinci bila perlu.
+
+**Warna jalan (mode ambang nilai):** bila simulasi dipakai, dari tinggi air maksimum di ruas (hijau < ambang terganggu, kuning sampai ambang tergenang, merah di atasnya).
 Bila tidak, dari probabilitas banjir `fl_max`. Batas bisa diubah di Pengaturan rinci.
 
 **Tergenang atau rusak:** ruas tergenang putus sementara dan terbuka sendiri saat air surut karena drainase. Ruas dengan air di atas ambang rusak

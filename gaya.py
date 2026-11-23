@@ -70,7 +70,15 @@ iframe{border:3px solid var(--navy)!important;border-radius:20px;box-shadow:6px 
 [data-testid="stCaptionContainer"],[data-testid="stCaptionContainer"] *{color:#3b4468!important}
 label,[data-testid="stWidgetLabel"] p,[data-testid="stMarkdownContainer"] p,[data-testid="stMarkdownContainer"] li{color:var(--navy)}
 [data-testid="stExpander"] summary,[data-testid="stExpander"] summary *{color:var(--navy)!important}
-[data-testid="stAlert"] *{color:var(--navy)!important}
+/* Kotak info/peringatan: latar terang bergaya kartun + teks gelap, apa pun tema browser (tidak pernah gelap di atas gelap) */
+[data-testid="stAlert"],[data-testid="stAlert"] [data-baseweb="notification"],[data-testid="stAlertContainer"]{
+ background:#e6f4ff!important;border:2.5px solid #1a1f36!important;border-radius:14px!important;box-shadow:3px 3px 0 #1a1f36}
+[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]),[data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]) [data-baseweb="notification"]{background:#fff0c2!important}
+[data-testid="stAlert"]:has([data-testid="stAlertContentError"]),[data-testid="stAlert"]:has([data-testid="stAlertContentError"]) [data-baseweb="notification"]{background:#ffe1e1!important}
+[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]),[data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"]) [data-baseweb="notification"]{background:#d9fbe8!important}
+[data-testid="stAlert"] *,[data-testid="stAlertContainer"] *{color:#1a1f36!important;-webkit-text-fill-color:#1a1f36!important}
+/* Tooltip dan kotak gelap lain: latar navy selalu berteks putih */
+[data-testid="stTooltipContent"],[data-testid="stTooltipContent"] *{background:#1a1f36!important;color:#fff!important}
 .legenda{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px}
 .legenda .item{display:inline-flex;align-items:center;gap:7px;background:#fff;color:var(--navy);border:2px solid var(--navy);
  border-radius:999px;padding:2px 12px 2px 8px;font-weight:800;font-size:.86rem}
