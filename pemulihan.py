@@ -77,7 +77,7 @@ def buat_od(G, ti, od_tabel, maks=15):
 
 
 # ---------------------------------------------------------------- hitung
-def jalankan(G, P, L, bencana, ti, od, skor, algos, kru, tetap, perkm, it, dt):
+def jalankan(G, P, L, bencana, ti, od, skor, algos, tim, tetap, perkm, it, dt, rilis=None, tambah_dur=None):
     ada = {d["i"] for *_, d in G.edges(data=True)}
     P = {int(i) for i in P} & ada
     L = ({int(i) for i in L} & ada) - P
@@ -85,10 +85,12 @@ def jalankan(G, P, L, bencana, ti, od, skor, algos, kru, tetap, perkm, it, dt):
         return None
     lo, hi = float(skor.min()), float(skor.max())
     krus = ((skor - lo) / ((hi - lo) or 1.0)).to_dict()
-    dur = {i: tetap + perkm * G.graph["panjang"][i] / 1000 for i in P}
+    tambah_dur = tambah_dur or {}
+    dur = {i: tetap + perkm * G.graph["panjang"][i] / 1000 + float(tambah_dur.get(i, 0.0)) for i in P}
     M = rt.Model(G, P, {i: rt.HAMBATAN[bencana] for i in L}, rs=ti["rs"], posko=ti["posko"], depot=ti["depot"],
                  pop=ti["pop"], od=od, bobot=rt.PROFIL[bencana], perlu_depot=rt.PERLU_DEPOT[bencana],
-                 penalti=7200.0, dur=dur, krus=krus)
+                 penalti=7200.0, dur=dur, krus=krus,
+                 rilis={i: v for i, v in (rilis or {}).items() if i in P})
     urut, jad, tit, rg = {}, {}, {}, {}
     for a in algos:
         if a == "acak":
@@ -98,7 +100,7 @@ def jalankan(G, P, L, bencana, ti, od, skor, algos, kru, tetap, perkm, it, dt):
         else:
             u = rt.susun(M, a, int(it), float(dt))
         urut[a] = u
-        jad[a], tit[a] = rt.jadwal(M, u, int(kru))
+        jad[a], tit[a] = rt.jadwal(M, u, tim)
         rg[a] = rt.ringkas(tit[a])
     terbaik = min(rg, key=lambda a: rg[a]["luas"])
     return {"M": M, "urut": urut, "jad": jad, "tit": tit, "rg": rg, "algos": list(algos), "terbaik": terbaik}

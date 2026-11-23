@@ -1,42 +1,39 @@
 # 🛣️ Jalan Siaga (khusus banjir)
 
-Aplikasi Streamlit untuk urutan dan animasi perbaikan jalan pascabanjir. Bahaya hanya dari **probabilitas banjir `fl_max`**.
+Aplikasi Streamlit: simulasi genangan dari hujan, klasifikasi ruas (terganggu / tergenang / rusak), fase selama banjir,
+dan urutan serta animasi perbaikan dengan tim dan alat berat. Jalankan: `pip install -r requirements.txt` lalu `streamlit run app.py`.
 
-## Cara pakai
-1. **Unggah** semua file sekaligus. Perannya dibaca otomatis:
-   - garis terbanyak = jalan (GeoJSON, GeoPackage, Shapefile .zip) dengan kolom `fl_max`
-   - titik atau CSV `nama,jenis,lat,lon,bobot` = RS, posko, alat berat, **quarry**, permukiman
-   - poligon (atau nama file berisi banjir/genangan) = area gangguan
-   - CSV `nama,asal_lat,asal_lon,tujuan_lat,tujuan_lon,waktu_menit,bobot` = data perjalanan
-   - **GeoTIFF (.tif) = DEM** (raster ketinggian) untuk simulasi banjir dari curah hujan
-   - CSV berisi nomor ruas + `fl_max` baru (mis. hasil simulasi hujan) = **menggantikan** `fl_max` di jalan
-     (dicocokkan lewat kolom nomor ruas yang namanya sama)
-2. **Tandai jalan putus** di peta (klik ruas atau gambar area). Urutan perbaikan muncul otomatis.
-3. Buka tab **🎬 Animasi perbaikan**: truk berangkat dari quarry ke tiap ruas putus, ruas berubah merah → hijau.
+## Alur
+1. **Data**: seret semua file sekaligus. Perannya dibaca otomatis:
+   jalan (garis, kolom `fl_max` opsional) · titik/CSV `nama,jenis,lat,lon,bobot` (RS, posko, alat berat, quarry, permukiman; bobot alat = jumlah unit) ·
+   **DEM .tif** · **tutupan lahan** (poligon, kolom `cn` atau kelas lahan: permukiman, sawah, hutan, ...) · **garis sungai** ·
+   **hujan per jam** (CSV kolom `jam,mm`, mis. prakiraan BMKG) · **jejak banjir** (CSV `lat,lon,tinggi` m atau cm) ·
+   area gangguan · data perjalanan · **file proyek .json**. Menambah file tidak menghapus tanda manual; hanya mengganti jalan yang mereset.
+2. **Simulasi banjir**: pilih preset kawasan, hujan, pola hujan, kondisi tanah → ▶️ Jalankan (di latar belakang, ada perkiraan waktu dan tombol batal).
+   Hasil disimpan per kombinasi parameter, jadi skenario yang sama langsung muncul.
+3. **Peta dan penanganan**: tandai ruas (klik atau gambar area), tambah titik, lihat urutan perbaikan, animasi, waktu tempuh, keadaan selama banjir.
+4. **Hasil dan unduhan**: peringkat, banjir per ruas (jam mulai putus, lama genangan), ambang hujan per ruas, GeoTIFF, poligon genangan, PDF satu halaman.
 
-## Simulasi banjir dari curah hujan
-Unggah **DEM (.tif)** bersama file jalan, buka panel **🌧️ Simulasi banjir dari curah hujan**, isi curah hujan (mm), lama hujan (jam),
-dan Curve Number, lalu **▶️ Jalankan simulasi**. Hasilnya:
-- genangan di peta (biru muda → tua → ungu) dengan penggeser waktu (naik dan surut),
-- **tinggi banjir (m) di tiap ruas jalan** (muncul saat kursor diarahkan ke ruas, dan di CSV unduhan),
-- ruas dengan tinggi ≥ ambang otomatis bisa ditandai **terganggu/putus** (tombol ✅ Terapkan), lalu urutan perbaikan dihitung seperti biasa.
+## Tergenang atau rusak
+| Kelas | Tinggi air (bawaan) | Perlakuan |
+|---|---|---|
+| terganggu | ≥ 15 cm | masih bisa lewat, lebih lambat |
+| tergenang | ≥ 30 cm | putus sementara; **terbuka sendiri saat air surut** karena drainase, tidak masuk antrean perbaikan |
+| rusak | ≥ 60 cm | banjir membawa sedimen dan menggerus jalan; **tetap putus** sesudah air surut, diperbaiki dengan alat berat, mulai setelah air surut |
+Semua ambang bisa diubah di Pengaturan rinci.
 
-Persyaratan DEM: GeoTIFF dengan CRS, menutupi seluruh jalan. Sumber gratis: DEMNAS (8 m, tanahair.indonesia.go.id),
-Copernicus GLO-30 atau SRTM (30 m). Tidak perlu menambah kolom apa pun di GeoJSON jalan.
-Metode: limpasan SCS-CN, lalu aliran 2D inersia lokal (Bates dkk., 2010) dengan Manning. Model skrining, bukan pengganti HEC-RAS 2D.
-Modul inti `simulasi.py` tidak bergantung pada Streamlit sehingga bisa diuji terpisah.
+## Model
+Hujan (pola seragam / puncak awal-tengah-akhir / CSV) → limpasan SCS-CN kumulatif (CN seragam atau per sel dari tutupan lahan, disesuaikan
+tanah kering/normal/basah) → aliran 2D inersia lokal (Bates dkk., 2010) dengan Manning. **Drainase** membuang genangan terus-menerus (mm/jam),
+juga sesudah hujan reda. Opsional: debit sungai (hidrograf segitiga di hulu garis sungai atau titik), pasang di satu tepi peta, pompa,
+saluran dibersihkan, ruas ditinggikan. Angka Courant bawaan 0,4 (mode Teliti 0,25): nilai 0,7 menumpuk air secara palsu pada DEM kasar.
+Model skrining, bukan pengganti HEC-RAS 2D.
 
-## Warna
-Jalan: hijau = aman, kuning = rawan sedang, merah = rawan tinggi (batas bisa diubah). Ruas putus: merah putus-putus
-bertepi gelap; terganggu: oranye putus-putus; sudah diperbaiki: hijau penuh.
-
-## Nama jalan
-Nomor ruas dicocokkan dengan jalan OpenStreetMap (Overpass API, butuh internet). Hasil disimpan di folder sementara.
-Bila file jalan sudah punya kolom nama jalan, kolom itu dipakai dan OSM hanya mengisi yang kosong.
+## Tim dan alat berat
+Tim dasar + alat berat per tim + tabel tim tambahan (tiba jam ke-berapa, pangkalan). Kecepatan tim = jumlah alat ^ efek (bawaan 0,75).
+Tab **Tim dan alat** menampilkan jam selesai untuk 1..N tim dan 1-3 alat per tim, serta jumlah minimum untuk mencapai target.
 
 ## Berkas
-`app.py` halaman utama, `simulasi.py` simulasi banjir hujan, `ingest.py` pembaca file, `nama_jalan.py` pencari nama jalan, `animasi.py` animasi,
-`pemulihan.py` penghubung model, `peta.py` peta, `gaya.py` tampilan, `restorasi.py` model dan algoritma,
-`scoring.py` kelas banjir, `.streamlit/config.toml` tema.
-
-Jalankan: `pip install -r requirements.txt` lalu `streamlit run app.py`.
+`app.py` halaman · `simulasi.py` hidrologi dan genangan · `skenario.py` konteks, cache, tugas latar belakang, ambang hujan, kalibrasi ·
+`fase.py` isolasi dan evakuasi selama banjir · `restorasi.py` model, algoritma, tim · `pemulihan.py` penghubung · `ekspor.py` GeoTIFF, poligon, PDF ·
+`ingest.py` pembaca file · `peta.py` · `animasi.py` · `gaya.py` · `scoring.py` · `nama_jalan.py` (manual, tombol).

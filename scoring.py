@@ -13,6 +13,13 @@ def kelas_banjir(p, batas=BATAS_AWAL):
     kuning, merah = batas
     return pd.Series(
         ["Rawan tinggi" if x >= merah else "Rawan sedang" if x >= kuning else "Aman" for x in p], index=p.index)
+def kelas_kedalaman(d, ambang):
+    """Kedalaman simulasi (m) -> kelas warna jalan yang sama dengan kelas_banjir: <ambang[0] hijau, sampai ambang[1] kuning, di atasnya merah."""
+    kuning, merah = ambang[0], ambang[1]
+    return pd.Series(["Rawan tinggi" if x >= merah else "Rawan sedang" if x >= kuning else "Aman" for x in d],
+                     index=getattr(d, "index", None))
+
+
 KATA_STATUS = {"arteri": ["arteri"], "kolektor": ["kolektor"], "lokal": ["lokal", "lingkungan"]}
 
 

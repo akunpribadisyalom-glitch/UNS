@@ -6,6 +6,7 @@ INK = NAVY = "#1a1f36"
 CASING = "#2b2b2b"     # garis tepi jalan di peta (netral, bukan biru)
 KORAL, MATAHARI, MINT, LANGIT, UNGU, HIJAU, AMBER = (
     "#d62828", "#ffd166", "#2ec4b6", "#4cc9f0", "#6a1b9a", "#2e9d57", "#f28c00")
+AIR = "#1e88e5"        # ruas tergenang sementara (surut sendiri)
 KERJA = "#1565c0"      # ruas yang sedang dikerjakan (animasi)
 
 CSS = """

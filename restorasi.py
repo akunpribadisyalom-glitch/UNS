@@ -156,7 +156,7 @@ def od_dari_tabel(G, t):
 # ---------------------------------------------------------------- model
 class Model:
     def __init__(self, G, putus, lambat=None, rs=(), posko=(), depot=(), pop=None, od=(),
-                 bobot=None, perlu_depot=False, penalti=7200.0, dur=None, krus=None):
+                 bobot=None, perlu_depot=False, penalti=7200.0, dur=None, krus=None, rilis=None):
         self.G = G
         self.putus = frozenset(int(i) for i in putus)
         self.lambat = {int(i): float(v) for i, v in (lambat or {}).items()}
@@ -169,6 +169,8 @@ class Model:
         dur = dur or {}
         self.dur = {i: max(float(dur.get(i, 1.0)), 0.05) for i in self.putus}
         self.krus = {int(k): float(v) for k, v in (krus or {}).items()}
+        # rilis: jam paling awal ruas rusak boleh dikerjakan (air banjir harus surut dulu)
+        self.rilis = {int(k): float(v) for k, v in (rilis or {}).items()}
         self.ujung = {}
         for u, v, d in G.edges(data=True):
             self.ujung.setdefault(d["i"], set()).update((u, v))
@@ -251,11 +253,13 @@ class Model:
             rep = rep | {i}
         return tot
 
-    def mobilisasi(self, i, rep):
-        """Detik perjalanan dari depot terdekat ke ujung ruas i lewat jalan yang sudah terbuka."""
-        if not self.depot:
+    def mobilisasi(self, i, rep, sumber=None):
+        """Detik perjalanan dari pangkalan terdekat (`sumber` = simpul, bawaan semua depot/quarry) ke ujung ruas i
+        lewat jalan yang sudah terbuka."""
+        src = set(sumber) if sumber else self.depot
+        if not src:
             return 0.0
-        d = nx.multi_source_dijkstra_path_length(self.G, self.depot, weight=self._fn(self.putus - rep))
+        d = nx.multi_source_dijkstra_path_length(self.G, src, weight=self._fn(self.putus - rep))
         t = [d[n] for n in self.ujung[i] if n in d]
         return min(t) if t else 0.0
 
@@ -363,30 +367,72 @@ def susun(M, algo, iterasi=400, detik=30.0):
     raise ValueError(f"Algoritma tidak dikenal: {algo}")
 
 
+# ---------------------------------------------------------------- tim dan alat berat
+ALPHA_ALAT = 0.75      # produktivitas tim = jumlah_alat ** alpha (tambahan alat memberi hasil yang makin kecil); asumsi
+PROD_MANUAL = 0.3      # tim tanpa alat berat bekerja manual (kecepatan relatif terhadap 1 alat berat)
+
+
+def produktivitas(n_alat, alpha=ALPHA_ALAT):
+    n = float(n_alat)
+    return PROD_MANUAL if n <= 0 else n ** float(alpha)
+
+
+def buat_tim(n=1, alat=1, tambahan=None, alpha=ALPHA_ALAT):
+    """Daftar tim. `n` tim dasar (siap jam 0) dengan `alat` unit alat berat tiap tim, ditambah baris `tambahan`
+    [{nama, alat, tiba, sumber}] (tim bantuan yang tiba belakangan; `sumber` = simpul pangkalan atau None)."""
+    tim = [{"nama": f"Tim {k + 1}", "alat": float(alat), "tiba": 0.0, "sumber": None} for k in range(max(int(n), 0))]
+    for r in tambahan or []:
+        tim.append({"nama": str(r.get("nama") or f"Tim {len(tim) + 1}"), "alat": float(r.get("alat", 1)),
+                    "tiba": max(float(r.get("tiba", 0.0)), 0.0), "sumber": r.get("sumber") or None})
+    if not tim:
+        tim = [{"nama": "Tim 1", "alat": float(alat), "tiba": 0.0, "sumber": None}]
+    for t in tim:
+        t["prod"] = produktivitas(t["alat"], alpha)
+    return tim
+
+
 # ---------------------------------------------------------------- jadwal & ringkasan
-def jadwal(M, urut, kru=1):
-    """Jadwalkan `urut` pada `kru` tim. Mengembalikan (DataFrame baris, titik kurva [(jam, L)])."""
-    kru = max(int(kru), 1)
-    bebas = [0.0] * kru
+def jadwal(M, urut, tim=1):
+    """Jadwalkan `urut` pada tim (bilangan = jumlah tim identik, atau daftar dari buat_tim).
+
+    Tiap ruas, sesuai urutan, diberikan ke tim yang paling cepat menyelesaikannya. Ruas baru boleh dikerjakan bila air
+    sudah surut (M.rilis), tim sudah tiba, dan ruas bisa dicapai lewat jalan yang sudah terbuka (kecuali akses darurat).
+    Durasi kerja = durasi dasar / produktivitas tim. Mengembalikan (DataFrame baris, titik kurva [(jam, L)]).
+    """
+    if not isinstance(tim, (list, tuple)):
+        tim = buat_tim(int(tim))
+    tim = list(tim) or buat_tim(1)
+    bebas = [float(t.get("tiba", 0.0)) for t in tim]
     rep = frozenset()
     siap = {i: 0.0 for i in M.hitung(rep)["layak"]}
     baris = []
     for k, i in enumerate(urut, 1):
         info = M.hitung(rep)
         darurat = bool(M.perlu_depot and i not in info["layak"])
-        mob = M.mobilisasi(i, rep) / 3600
-        c = min(range(kru), key=lambda x: bebas[x])
-        mulai = max(bebas[c], 0.0 if darurat else siap.get(i, 0.0))
-        selesai = mulai + M.dur[i] + mob
+        rl = M.rilis.get(i, 0.0)
+        awal = max(0.0 if darurat else siap.get(i, 0.0), rl)
+        mob_cache, pilih = {}, None
+        for c, t in enumerate(tim):
+            src = t.get("sumber")
+            kc = None if not src else frozenset(src)
+            if kc not in mob_cache:
+                mob_cache[kc] = M.mobilisasi(i, rep, src) / 3600
+            mob = mob_cache[kc]
+            mulai = max(bebas[c], awal)
+            selesai = mulai + mob + M.dur[i] / max(t["prod"], 1e-6)
+            if pilih is None or (selesai, mulai) < (pilih[3], pilih[2]):
+                pilih = (c, mob, mulai, selesai)
+        c, mob, mulai, selesai = pilih
         bebas[c] = selesai
         rep2 = rep | {i}
         info2 = M.hitung(rep2)
         for e in info2["layak"] - info["layak"]:
             siap.setdefault(e, selesai)
         baris.append({
-            "urutan": k, "ruas": i, "tim": c + 1,
+            "urutan": k, "ruas": i, "tim": c + 1, "tim_nama": tim[c]["nama"], "alat": tim[c]["alat"],
             "mulai_jam": mulai, "selesai_jam": selesai,
-            "durasi_jam": M.dur[i], "mobilisasi_jam": mob, "akses_darurat": darurat,
+            "durasi_jam": M.dur[i] / max(tim[c]["prod"], 1e-6), "mobilisasi_jam": mob, "akses_darurat": darurat,
+            "rilis_jam": rl,
             "pulih_sebelum_pct": 100 * (1 - info["L"]), "pulih_sesudah_pct": 100 * (1 - info2["L"]),
             "rs_menit": info2["mentah"].get("rs", np.nan) / 60,
             "posko_menit": info2["mentah"].get("posko", np.nan) / 60,
@@ -399,6 +445,18 @@ def jadwal(M, urut, kru=1):
         sel.add(i)
         titik.append((t, M.hitung(frozenset(sel))["L"]))
     return df, titik
+
+
+def kebutuhan_sumber_daya(M, urut, n_maks=8, alat_opsi=(1, 2, 3), alpha=ALPHA_ALAT):
+    """Berapa cepat semua ruas selesai bila tim dan alat berat ditambah (tim dasar saja, tanpa tim tambahan)."""
+    baris = []
+    for alat in alat_opsi:
+        for n in range(1, int(n_maks) + 1):
+            _, tit = jadwal(M, urut, buat_tim(n, alat, None, alpha))
+            r = ringkas(tit)
+            baris.append({"tim": n, "alat_per_tim": int(alat), "total_alat": int(n * alat), "selesai_jam": r["selesai"],
+                          "t50_jam": r["t50"], "t90_jam": r["t90"], "luas_kerugian": r["luas"]})
+    return pd.DataFrame(baris)
 
 
 def ringkas(titik):

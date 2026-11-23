@@ -11,8 +11,10 @@ TILE = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png
 SAT = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 # Warna jalan menurut probabilitas banjir: merah (rawan), kuning (sedang), hijau (aman).
 KRUS = {k: (sc.WARNA[k], sc.LEBAR[k]) for k in sc.KELAS}
-EMOJI = {"rs": "🏥", "posko": "⛺", "depot": "🚜", "quarry": "⛏️", "permukiman": "🏠"}
-LABEL = {"rs": "RS", "posko": "Posko", "depot": "Alat berat", "quarry": "Quarry", "permukiman": "Permukiman"}
+EMOJI = {"rs": "🏥", "posko": "⛺", "depot": "🚜", "quarry": "⛏️", "permukiman": "🏠", "sungai": "🌊", "pompa": "🔧",
+         "drainase": "🕳️", "tinggikan": "⬆️"}
+LABEL = {"rs": "RS", "posko": "Posko", "depot": "Alat berat", "quarry": "Quarry", "permukiman": "Permukiman",
+         "sungai": "Masukan sungai", "pompa": "Pompa", "drainase": "Drainase dibersihkan", "tinggikan": "Ruas ditinggikan"}
 
 
 def dasar(gdf, view=None):
@@ -52,16 +54,22 @@ def jalan_krusial(m, g):
         if ada_tinggi:
             sub["banjir_m"] = sub["banjir_m"].round(2)
             f_.append("banjir_m"), a_.append("Tinggi banjir simulasi (m)")
+            for kol, lb_ in (("putus_mulai_jam", "Mulai terputus (jam)"), ("putus_lama_jam", "Lama terputus (jam)"),
+                             ("genang_lama_jam", "Lama genangan (jam)")):
+                if kol in g.columns:
+                    sub[kol] = g.loc[sub.index, kol].round(1).astype(object).where(g.loc[sub.index, kol].notna(), "-")
+                    f_.append(kol), a_.append(lb_)
         _geo(m, sub, gaya.CASING, lb + 2.5, False, op=.55)
         _geo(m, sub, w, lb, True, fields=tuple(f_), alias=tuple(a_))
 
 
-def gangguan(m, gdf, nama, P, L, rep=frozenset()):
-    """Ruas putus = merah putus-putus tebal bertepi gelap; terganggu = oranye putus-putus; diperbaiki = hijau penuh."""
+def gangguan(m, gdf, nama, P, L, rep=frozenset(), T=()):
+    """Rusak = merah putus-putus tebal bertepi gelap; tergenang = biru putus-putus; terganggu = oranye; diperbaiki = hijau penuh."""
     d = gdf[["geometry"]].copy()
     d["nama"], d["kelas"] = nama.values, ""
     for ids, warna, lbl, dash in ((sorted(L), gaya.AMBER, "terganggu", "3 9"),
-                                  (sorted(P - set(rep)), gaya.KORAL, "putus", "10 8"),
+                                  (sorted(set(T) - set(P)), gaya.AIR, "tergenang (surut sendiri)", "6 7"),
+                                  (sorted(P - set(rep)), gaya.KORAL, "rusak", "10 8"),
                                   (sorted(set(rep) & set(P)), gaya.HIJAU, "diperbaiki", None)):
         if not ids:
             continue
@@ -134,3 +142,41 @@ def genangan(m, png, batas, nama="Genangan banjir (simulasi)"):
     uri = "data:image/png;base64," + base64.b64encode(png).decode()
     folium.raster_layers.ImageOverlay(image=uri, bounds=[[s_, w], [n, e]], opacity=.85, name=nama,
                                       interactive=False, zindex=5).add_to(m)
+
+
+def fase(m, gdf, nama, blok, lambat, evak=None, perm=None, iso=None):
+    """Keadaan jaringan pada satu jam: ruas terblokir (biru), terganggu (oranye), jalur evakuasi (hijau), permukiman terisolasi (merah)."""
+    d = gdf[["geometry"]].copy()
+    d["nama"], d["kelas"] = nama.values, ""
+    for ids, warna, lbl, dash in ((sorted(lambat), gaya.AMBER, "terganggu", "3 9"), (sorted(blok), gaya.AIR, "terblokir", "6 7")):
+        if not ids:
+            continue
+        sub = d.loc[ids].copy()
+        sub["kelas"] = lbl
+        _geo(m, sub, "#ffffff", 13, False, op=.95)
+        _geo(m, sub, gaya.CASING, 10, False, op=.9)
+        _geo(m, sub, warna, 6, True, dash=dash)
+    if evak is not None and len(evak):
+        for r in evak.itertuples():
+            if r.tersambung and len(r.ruas):
+                garis_garis(m, gdf, r.ruas, gaya.HIJAU, 4, f"Evakuasi {r.permukiman}: {r.menit:.0f} menit", op=.9)
+    if perm is not None and iso is not None:
+        for r, bad in zip(perm.itertuples(), iso):
+            if bad:
+                folium.CircleMarker([r.lat, r.lon], radius=8, color=gaya.KORAL, weight=3, fill=True, fill_color="#ffffff",
+                                    fill_opacity=.9, tooltip=f"{r.nama}: terisolasi dari RS").add_to(m)
+
+
+def sungai_garis(m, gdf):
+    folium.GeoJson(gdf[["geometry"]], style_function=lambda _: {"color": "#4cc9f0", "weight": 3, "opacity": .9},
+                   name="Sungai").add_to(m)
+
+
+def masukan(m, df):
+    """Penanda masukan sungai dan intervensi (pompa, drainase, ruas ditinggikan)."""
+    for _, r in df.iterrows():
+        j = str(r["jenis"])
+        h = (f"<div style='width:34px;height:34px;border-radius:50%;background:#e3f6ff;border:3px solid {gaya.INK};"
+             f"display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:3px 3px 0 {gaya.INK}'>"
+             f"{EMOJI.get(j, '📍')}</div>")
+        folium.Marker([r["lat"], r["lon"]], icon=_ikon(h, 34), tooltip=f"{LABEL.get(j, j)}: {r.get('nama', '')}").add_to(m)

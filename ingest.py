@@ -1,5 +1,6 @@
 """Baca file unggahan dan tebak perannya (jalan, titik, area gangguan, perjalanan, atribut)."""
 import io
+import json
 import os
 import re
 import tempfile
@@ -12,10 +13,15 @@ import streamlit as st
 from shapely.geometry import LineString
 
 TITIK_COLS = ["nama", "jenis", "lat", "lon", "bobot"]
-PERAN = ["otomatis", "jalan", "titik", "gangguan", "perjalanan", "atribut", "dem", "abaikan"]
+PERAN = ["otomatis", "jalan", "titik", "gangguan", "perjalanan", "atribut", "dem", "lahan", "sungai", "hujan", "jejak",
+        "proyek", "abaikan"]
 
 K_TRIP = r"perjalanan|trip|rute|(^|[^a-z])od([^a-z]|$)"
 K_GANGGUAN = r"banjir|genang|longsor|gangguan|putus|rusak|terdampak|bencana|flood|landslide"
+K_SUNGAI = r"sungai|river|kali|waterway|stream|saluran"
+K_LAHAN = r"lahan|tutupan|landcover|land_cover|landuse|land_use|penggunaan|guna|(^|[^a-z])lc([^a-z]|$)|(^|[^a-z])cn([^a-z]|$)"
+K_TINGGI = r"tinggi|kedalaman|depth|genang|jejak"
+K_MM = r"(^|[^a-z])mm([^a-z]|$)|curah|hujan|rain|precip"
 K_PERM = r"permukiman|pemukiman|desa|kampung|penduduk|kawasan|dusun|village"
 POLA_JENIS = [
     ("rs", r"(^|[^a-z])rs([^a-z]|$)|rsud|rumah ?sakit|hospital|puskesmas|klinik|faskes|health"),
@@ -66,18 +72,31 @@ def _latlon(t):
 
 def tebak_peran(nama, obj):
     n = nama.lower()
+    if isinstance(obj, dict):
+        return "proyek"
     if isinstance(obj, pd.DataFrame) and not isinstance(obj, gpd.GeoDataFrame):
         c = {str(x).lower().strip() for x in obj.columns}
         if {"asal_lat", "asal_lon", "tujuan_lat", "tujuan_lon"} <= c:
             return "perjalanan"
-        return "titik" if _latlon(obj) else "atribut"
+        if _latlon(obj):
+            if any(re.search(K_TINGGI, x) for x in c) and not any(re.search(r"jenis|tipe|type|kategori", x) for x in c):
+                return "jejak"
+            return "titik"
+        if any(re.search(K_MM, x) for x in c):
+            return "hujan"
+        return "atribut"
     tipe = set(obj.geom_type.dropna())
     if all("Line" in t for t in tipe):
         if re.search(K_TRIP, n):
             return "perjalanan"
+        if re.search(K_SUNGAI, n):
+            return "sungai"
         return "gangguan" if re.search(K_GANGGUAN, n) else "jalan"
     if all("Point" in t for t in tipe):
         return "titik"
+    kol = [str(c).lower().strip() for c in obj.columns if c != "geometry"]
+    if "cn" in kol or re.search(K_LAHAN, n):
+        return "lahan"
     return "titik" if re.search(K_PERM, n) else "gangguan"
 
 
@@ -86,6 +105,13 @@ def baca_berkas(f, epsg=32749):
     nm = f.name.lower()
     if nm.endswith((".tif", ".tiff")):                     # DEM (raster ketinggian), dibaca nanti oleh simulasi.py
         return "dem", f.getvalue()
+    if nm.endswith(".json"):                               # berkas proyek Jalan Siaga (tanda manual dan pengaturan)
+        try:
+            j = json.loads(f.getvalue().decode("utf-8"))
+            if isinstance(j, dict) and "jalan_siaga" in j:
+                return "proyek", j
+        except (ValueError, UnicodeDecodeError):
+            pass
     if nm.endswith((".csv", ".xlsx", ".xls")):
         t = baca_tabel(f.name, f.getvalue())
         return tebak_peran(f.name, t), t
@@ -147,6 +173,7 @@ def od_dari_garis(d):
 def rakit(items):
     """items = [(nama, peran_efektif, objek)] -> dict hasil + daftar catatan."""
     jalan, titik, gang, od, attr, cat, dem = [], [], [], [], [], [], []
+    lahan, sungai, hujan, jejak, proyek = [], [], [], [], []
     for nama, peran, obj in items:
         try:
             if peran == "jalan" and isinstance(obj, gpd.GeoDataFrame):
@@ -161,6 +188,16 @@ def rakit(items):
                 attr.append(obj)
             elif peran == "dem" and isinstance(obj, (bytes, bytearray)):
                 dem.append(bytes(obj))
+            elif peran == "lahan" and isinstance(obj, gpd.GeoDataFrame):
+                lahan.append(obj)
+            elif peran == "sungai" and isinstance(obj, gpd.GeoDataFrame):
+                sungai.append(obj)
+            elif peran == "hujan" and isinstance(obj, pd.DataFrame) and not isinstance(obj, gpd.GeoDataFrame):
+                hujan.append(obj)
+            elif peran == "jejak" and isinstance(obj, pd.DataFrame) and not isinstance(obj, gpd.GeoDataFrame):
+                jejak.append(jejak_dari(obj))
+            elif peran == "proyek" and isinstance(obj, dict):
+                proyek.append(obj)
             elif peran != "abaikan":
                 cat.append(f"{nama}: tipe data tidak cocok untuk peran '{peran}', diabaikan.")
         except Exception as e:  # file bermasalah tidak boleh menjatuhkan aplikasi
@@ -176,7 +213,37 @@ def rakit(items):
             gdf = gabung_tabel(gdf, t)
     return {"jalan": gdf, "titik": pd.concat(titik, ignore_index=True) if titik else None,
             "gangguan": gang, "od": pd.concat(od, ignore_index=True) if od else None, "catatan": cat,
-            "dem": dem[0] if dem else None}
+            "dem": dem[0] if dem else None, "lahan": lahan, "sungai": pd.concat(sungai, ignore_index=True) if sungai else None,
+            "hujan": hujan_dari(hujan[0]) if hujan else None, "jejak": pd.concat(jejak, ignore_index=True) if jejak else None,
+            "proyek": proyek[0] if proyek else None}
+
+
+def hujan_dari(t):
+    """Tabel curah hujan -> daftar mm per jam (urut jam bila ada kolom jam/waktu). Bisa dari prakiraan BMKG."""
+    kmm = next((c for c in t.columns if re.search(K_MM, str(c).lower())), None)
+    v = pd.to_numeric(t[kmm].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    kj = next((c for c in t.columns if re.search(r"jam|waktu|time|hour|tanggal", str(c).lower())), None)
+    if kj is not None:
+        try:
+            v = v.iloc[np.argsort(pd.to_numeric(t[kj], errors="coerce").to_numpy(), kind="stable")] \
+                if pd.to_numeric(t[kj], errors="coerce").notna().all() else v
+        except Exception:  # noqa: BLE001
+            pass
+    return [float(x) for x in v.fillna(0.0).clip(lower=0.0)]
+
+
+def jejak_dari(t):
+    """Tabel jejak banjir (lat, lon, tinggi) -> DataFrame nama, lat, lon, tinggi_m (m; nilai > 10 dianggap cm)."""
+    ll = _latlon(t)
+    kt = next(c for c in t.columns if re.search(K_TINGGI, str(c).lower()) and c not in ll)
+    h = pd.to_numeric(t[kt].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    if h.max() > 10:
+        h = h / 100.0
+    kn = _kolom(t, r"^(nama|name|label|lokasi)")
+    nama = t[kn].astype(str) if kn is not None else pd.Series([f"Jejak {i + 1}" for i in range(len(t))], index=t.index)
+    out = pd.DataFrame({"nama": nama.values, "lat": pd.to_numeric(t[ll[0]], errors="coerce").values,
+                        "lon": pd.to_numeric(t[ll[1]], errors="coerce").values, "tinggi_m": h.values})
+    return out.dropna().reset_index(drop=True)
 
 
 def gabung_tabel(gdf, t):
